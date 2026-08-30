@@ -1,0 +1,9 @@
+﻿device:
+  host: 192.168.x.x        # receiver IP on your LAN
+  heos_pid: 000000000      # from player/get_players
+  serial: XXXXXXXXXXXX
+  model: RCD-N12
+  heos_firmware: 0.0.0
+ports:
+  heos: 1255
+  avr: 23
