@@ -1,0 +1,10 @@
+﻿{
+  "permissions": {
+    "allow": [
+      "Bash(pytest:*)",
+      "Bash(ruff:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)"
+    ]
+  }
+}
