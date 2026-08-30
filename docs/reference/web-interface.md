@@ -1,16 +1,16 @@
 ﻿---
-source: HEOS CLI session against 192.168.3.40, Denon RCD-N12 web manual, third-party reverse engineering
+source: HEOS CLI session against the local unit, Denon RCD-N12 web manual, third-party reverse engineering
 date: 2026-08-30
 status: partial
 verified_against: HEOS CLI 1255, live device, 2026-08-30
 untested: power, standby, sleep, source selection, HTTP goform
 ---
 
-# RCD-N12 Web Control Interface — Reference
+# RCD-N12 Control Protocols - Reference
 
-Design and protocol reference for a local browser-based control interface for a
-Denon RCD-N12 network CD receiver. No part of the web interface described here
-has been built or tested. Protocol facts are graded by evidence level below.
+Protocol reference for controlling a Denon RCD-N12 network CD receiver over the
+local network. Facts are graded by evidence level below. The control server and
+web UI design live in `docs/decisions/`.
 
 ## Device facts
 
@@ -26,7 +26,8 @@ Responses below were returned by the physical unit.
 - Commands are plain strings terminated with CRLF; responses are single-line JSON.
 - Round-trip latency under 500 ms; 300 ms proved sufficient for every query issued.
 - `system/register_for_change_events?enable=on` → `result: success`.
-- `player/get_players` → payload array containing the device facts above.
+- `player/get_players` → payload array containing the identity recorded in
+  `config/device.yaml`
 - `player/get_volume` → `0`. `player/get_mute` → `off`.
 - `player/set_volume?level=1` **changed device state**. Write access is confirmed,
   not merely read access.
@@ -159,7 +160,8 @@ Try port 80 first, then 8080. Status readback is a separate path.
 
 ## Open questions
 
-Resolve these before implementing section D.
+Resolve these before implementing the local control server
+(`docs/decisions/2026-08-30-local-control-server.md`).
 
 1. Which of ports 23, 80, 8080, 1255, 10443 are open — measured **twice**, once
    powered on and once in standby. The standby result determines which paths the
@@ -175,9 +177,10 @@ Resolve these before implementing section D.
    via HEOS at 10, 25, 50, 75, then read `MV?` each time. Without this, a single
    UI slider cannot drive both protocols coherently.
 
-## Probe snippet
+## Probe
 
-Run python tools/probe_device.py
+Run `python tools/probe_device.py`. Requires the unit powered on and reachable,
+and `config/device.yaml` present.
 
 ## References
 
