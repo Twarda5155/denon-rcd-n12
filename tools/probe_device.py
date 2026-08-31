@@ -9,7 +9,9 @@ from pathlib import Path
 import yaml
 
 CONFIG = yaml.safe_load(
-    (Path(__file__).resolve().parents[1] / "config" / "device.yaml").read_text()
+    (Path(__file__).resolve().parents[1] / "config" / "device.yaml").read_text(
+        encoding="utf-8-sig"
+    )
 )
 HOST = CONFIG["device"]["host"]
 PORT = CONFIG["ports"]["avr"]
