@@ -1,0 +1,15 @@
+{
+  "_comment": "Recorded AVR port-23 frames, keyed by device power state then command. Frames are CR-separated tokens as returned by Transport.avr.",
+  "on": {
+    "PW?": ["PWON"],
+    "PWON": ["PWON"],
+    "PWSTANDBY": ["PWSTANDBY"],
+    "MV?": ["MV20"]
+  },
+  "standby": {
+    "PW?": ["PWSTANDBY"],
+    "PWON": ["PWON"],
+    "PWSTANDBY": ["PWSTANDBY"],
+    "MV?": ["MV20"]
+  }
+}

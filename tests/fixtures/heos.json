@@ -1,0 +1,17 @@
+{
+  "_comment": "Recorded HEOS CLI responses keyed by command name. {pid}, {level} and {mute} are substituted from the fake's state before replay.",
+  "player/get_volume": {
+    "heos": {
+      "command": "player/get_volume",
+      "result": "success",
+      "message": "pid={pid}&level={level}"
+    }
+  },
+  "player/get_mute": {
+    "heos": {
+      "command": "player/get_mute",
+      "result": "success",
+      "message": "pid={pid}&state={mute}"
+    }
+  }
+}

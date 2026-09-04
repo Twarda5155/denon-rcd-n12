@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>denon rcd-n12</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfa;
+    --fg: #111;
+    --dim: #777;
+    --rule: #ccc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111; --fg: #e8e8e6; --dim: #888; --rule: #333; }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+
+  main { width: 22rem; padding: 2rem 1.5rem; }
+
+  h1 {
+    margin: 0 0 1.5rem;
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+
+  dl {
+    margin: 0 0 1.5rem;
+    border-top: 1px solid var(--rule);
+  }
+
+  div.row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  dt { color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; font-size: 12px; }
+  dd { margin: 0; font-variant-numeric: tabular-nums; }
+  dd.pending { color: var(--dim); }
+
+  .actions { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  button {
+    font: inherit;
+    text-align: left;
+    padding: 0.55rem 0.75rem;
+    color: var(--fg);
+    background: transparent;
+    border: 1px solid var(--rule);
+    border-radius: 0;
+    cursor: pointer;
+  }
+  button:hover:enabled { border-color: var(--fg); }
+  button:active:enabled { background: var(--fg); color: var(--bg); }
+  button:disabled { color: var(--dim); cursor: default; }
+
+  #log {
+    margin: 1.25rem 0 0;
+    min-height: 1.5em;
+    color: var(--dim);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  #log.error { color: var(--fg); }
+</style>
+</head>
+<body>
+<main>
+  <h1>denon rcd-n12</h1>
+
+  <dl>
+    <div class="row"><dt>power</dt><dd id="power" class="pending">&mdash;</dd></div>
+    <div class="row"><dt>volume</dt><dd id="volume" class="pending">&mdash;</dd></div>
+  </dl>
+
+  <div class="actions">
+    <button id="check-power">check power</button>
+    <button id="toggle-power">toggle power</button>
+    <button id="check-volume">check volume</button>
+  </div>
+
+  <p id="log"></p>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const buttons = [...document.querySelectorAll("button")];
+  const log = $("log");
+
+  function say(text, isError) {
+    log.textContent = text;
+    log.classList.toggle("error", Boolean(isError));
+  }
+
+  function show(cell, text, pending) {
+    cell.textContent = text;
+    cell.classList.toggle("pending", Boolean(pending));
+  }
+
+  // One request at a time. Rapid back-to-back commands are reported to
+  // soft-lock Denon units; the server paces them too, but this keeps the
+  // page from queueing a burst in the first place.
+  async function run(label, path, options) {
+    buttons.forEach((b) => (b.disabled = true));
+    say(label + "…");
+    try {
+      const res = await fetch(path, options);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "request failed");
+      if ("power" in data) show($("power"), data.power, false);
+      if ("volume" in data) {
+        show($("volume"), data.volume + "/100" + (data.mute ? "  muted" : ""), false);
+      }
+      say(label + " ok");
+    } catch (err) {
+      say(err.message, true);
+    } finally {
+      buttons.forEach((b) => (b.disabled = false));
+    }
+  }
+
+  const form = { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } };
+
+  $("check-power").onclick = () => run("check power", "/api/power");
+  $("check-volume").onclick = () => run("check volume", "/api/volume");
+  $("toggle-power").onclick = () =>
+    run("toggle power", "/api/power", { ...form, body: "state=toggle" });
+</script>
+</body>
+</html>
