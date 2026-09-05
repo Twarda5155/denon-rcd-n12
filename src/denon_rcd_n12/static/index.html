@@ -59,6 +59,30 @@
   dd.pending { color: var(--dim); }
 
   .actions { display: flex; flex-direction: column; gap: 0.5rem; }
+  .actions + .actions { margin-top: 1.25rem; }
+
+  .slider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.15rem 0.75rem 0.4rem;
+  }
+
+  input[type="range"] {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    accent-color: var(--fg);
+    cursor: pointer;
+  }
+  input[type="range"]:disabled { accent-color: var(--dim); cursor: default; }
+
+  output {
+    min-width: 3ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  output.pending { color: var(--dim); }
 
   button {
     font: inherit;
@@ -96,7 +120,16 @@
   <div class="actions">
     <button id="check-power">check power</button>
     <button id="toggle-power">toggle power</button>
+  </div>
+
+  <div class="actions">
     <button id="check-volume">check volume</button>
+    <div class="slider">
+      <input id="level" type="range" min="0" max="100" step="1" value="20"
+             aria-label="volume level">
+      <output id="level-out" class="pending" for="level">20</output>
+    </div>
+    <button id="set-volume">set volume</button>
   </div>
 
   <p id="log"></p>
@@ -104,8 +137,10 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const buttons = [...document.querySelectorAll("button")];
+  const controls = [...document.querySelectorAll("button, input")];
   const log = $("log");
+  const slider = $("level");
+  const levelOut = $("level-out");
 
   function say(text, isError) {
     log.textContent = text;
@@ -121,21 +156,34 @@
   // soft-lock Denon units; the server paces them too, but this keeps the
   // page from queueing a burst in the first place.
   async function run(label, path, options) {
-    buttons.forEach((b) => (b.disabled = true));
+    controls.forEach((c) => (c.disabled = true));
     say(label + "…");
     try {
       const res = await fetch(path, options);
-      const data = await res.json();
+      // Read as text first: an HTTP-level error page is HTML, and letting
+      // res.json() choke on it would report a parser error rather than the
+      // status that actually explains what went wrong.
+      const body = await res.text();
+      let data;
+      try {
+        data = JSON.parse(body);
+      } catch {
+        throw new Error("http " + res.status + ": server sent a non-JSON reply");
+      }
       if (!data.ok) throw new Error(data.error || "request failed");
       if ("power" in data) show($("power"), data.power, false);
       if ("volume" in data) {
         show($("volume"), data.volume + "/100" + (data.mute ? "  muted" : ""), false);
+        // Track what the device settled on, which may not be what was asked
+        // for: the slider is a request, the readout is the answer.
+        slider.value = data.volume;
+        show(levelOut, String(data.volume), false);
       }
       say(label + " ok");
     } catch (err) {
       say(err.message, true);
     } finally {
-      buttons.forEach((b) => (b.disabled = false));
+      controls.forEach((c) => (c.disabled = false));
     }
   }
 
@@ -145,6 +193,12 @@
   $("check-volume").onclick = () => run("check volume", "/api/volume");
   $("toggle-power").onclick = () =>
     run("toggle power", "/api/power", { ...form, body: "state=toggle" });
+  $("set-volume").onclick = () =>
+    run("set volume", "/api/volume", { ...form, body: "level=" + slider.value });
+
+  // Dim while the slider holds a level the device has not confirmed; solid
+  // again once a reply comes back through run().
+  slider.oninput = () => show(levelOut, slider.value, true);
 </script>
 </body>
 </html>
