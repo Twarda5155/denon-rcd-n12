@@ -1,18 +1,25 @@
 ﻿# denon-rcd-n12
 
 Local control of a Denon RCD-N12 network receiver on the home LAN, plus a
-Streamlit dashboard over its state.
+loopback-only one-page control app over its state.
 
 ## Environment
 - Windows 10 Pro, Windows Terminal, PowerShell.
-- Conda env `denon` (Python 3.12). Activate before anything: `conda activate denon`.
-- MariaDB on localhost for persisted state/history.
+- Mamba env `denon` (Python 3.12). Activate before anything: `mamba activate denon`.
+  Use mamba, not conda, for anything that touches environments.
+  PowerShell needs the hook first, or `activate` silently no-ops:
+  `(& mamba shell hook --shell powershell) | Out-String | Invoke-Expression`.
+  If mamba ever dies with `critical libmamba failed to run python command`
+  while reading `pip inspect --local`, the env's metadata is damaged: rebuild
+  it rather than repairing it. Recreating this env on 2026-09-05 cleared it.
+- MariaDB on localhost for persisted state/history. No driver is installed in
+  the env yet and no code talks to it — deliberate, as of 2026-09-05.
 - The receiver is on the local network. Its address is in `config/device.yaml`.
 
 ## Layout
-- `src/denon_rcd_n12/` — library. `transport.py` (I/O), `client.py` (commands), `cli.py`.
+- `src/denon_rcd_n12/` — library. `transport.py` (I/O), `client.py` (commands),
+  `server.py` (loopback HTTP API), `static/index.html` (the page), `cli.py`.
 - `tests/` — pytest. All tests use FakeTransport; none touch the network.
-- `streamlit/app.py` — dashboard.
 - `config/` — YAML, human-owned. Do not edit without asking.
 - `docs/decisions/` — one dated markdown file per design decision.
 - `docs/results/` — analysis writeups and publication material.
@@ -26,10 +33,12 @@ Streamlit dashboard over its state.
 
 ## Commands
 - Tests: `pytest -q`
-- Dashboard: `streamlit run streamlit/app.py`
+- Control page: `$env:PYTHONPATH="src"; python -m denon_rcd_n12.cli serve`
+  (there is no install step, so `src` must be on the path)
 - Lint: `ruff check src tests`
 
 ## Conventions
-- Python first; JavaScript only inside Streamlit components when unavoidable.
+- Python first; JavaScript only inside `static/index.html`, inlined and
+  dependency-free — the page must fetch nothing from off the machine.
 - Type hints on all public functions. Google-style docstrings.
 - Commit messages: `area: imperative summary` (e.g. `transport: retry on timeout`).
