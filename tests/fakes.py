@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -95,7 +96,12 @@ class FakeTelnetTransport:
 
 
 class FakeHeosTransport:
-    """Replays fixture HEOS responses in place of a real receiver."""
+    """Replays fixture HEOS responses in place of a real receiver.
+
+    Holds a mutable volume so writes are observable, the way the AVR fake holds
+    a power state: ``player/set_volume`` updates it and the following
+    ``player/get_volume`` reports the new level.
+    """
 
     def __init__(
         self,
@@ -135,6 +141,8 @@ class FakeHeosTransport:
             raise DeviceError("unreachable")
         self.commands.append(command)
         name = command.split("heos://", 1)[-1].split("?", 1)[0]
+        if name == "player/set_volume":
+            self.volume = int(parse_qs(command.split("?", 1)[-1])["level"][0])
         template = self._fixture.get(name)
         if template is None:
             raise DeviceError(f"no fixture for HEOS {name}")

@@ -25,6 +25,10 @@ from .transport import (
 POWER_ON = "on"
 POWER_STANDBY = "standby"
 
+#: Bounds of the HEOS absolute volume scale. Not the AVR ``MV`` scale, not dB.
+VOLUME_MIN = 0
+VOLUME_MAX = 100
+
 _PW_FRAME = re.compile(r"PW(ON|STANDBY)")
 
 #: Seconds to let the unit boot after ``PWON`` before reading state back. The
@@ -133,6 +137,33 @@ class DenonClient:
         level = heos_message(self.heos.query(f"heos://player/get_volume?pid={pid}"))
         state = heos_message(self.heos.query(f"heos://player/get_mute?pid={pid}"))
         return {"volume": int(level["level"]), "mute": state.get("state") == "on"}
+
+    def set_volume(self, level: int) -> dict[str, Any]:
+        """Set playback volume over HEOS and read back what the unit settled on.
+
+        Unlike :meth:`set_power` this does not first query the current level to
+        skip a redundant write: the pre-read would cost two HEOS round trips
+        before every step of a slider, and re-sending a level the unit already
+        holds costs it nothing.
+
+        Args:
+            level: Target level on the HEOS absolute scale, 0-100.
+
+        Returns:
+            Mapping with ``volume`` (int, 0-100) and ``mute`` (bool), as
+            :meth:`get_volume` reports them after the write.
+
+        Raises:
+            ValueError: If ``level`` is not an integer within the HEOS scale.
+            DeviceError: If the receiver rejected the command or could not be
+                read back.
+        """
+        if not isinstance(level, int) or not VOLUME_MIN <= level <= VOLUME_MAX:
+            raise ValueError(
+                f"volume must be an integer {VOLUME_MIN}-{VOLUME_MAX}, got {level!r}"
+            )
+        self.heos.query(f"heos://player/set_volume?pid={self.heos.pid}&level={level}")
+        return self.get_volume()
 
     @staticmethod
     def _power_from(frames: list[str]) -> str:

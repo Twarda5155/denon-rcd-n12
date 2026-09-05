@@ -7,7 +7,7 @@ import unittest
 from fakes import FakeHeosTransport, FakeTelnetTransport
 
 from denon_rcd_n12 import client as client_module
-from denon_rcd_n12.client import DenonClient
+from denon_rcd_n12.client import VOLUME_MAX, VOLUME_MIN, DenonClient
 from denon_rcd_n12.transport import DeviceError, _parse_flat_yaml, heos_message
 
 
@@ -129,6 +129,54 @@ class VolumeTests(unittest.TestCase):
         client, telnet, _ = build()
         client.get_volume()
         self.assertEqual(telnet.commands, [])
+
+    def test_set_volume_writes_then_reads_back(self) -> None:
+        client, _, heos = build(volume=20)
+        self.assertEqual(client.set_volume(55), {"volume": 55, "mute": False})
+        self.assertEqual(heos.volume, 55)
+
+    def test_set_volume_sends_the_level_to_the_configured_player(self) -> None:
+        client, _, heos = build()
+        client.set_volume(7)
+        self.assertEqual(
+            heos.commands[0], f"heos://player/set_volume?pid={heos.pid}&level=7"
+        )
+
+    def test_set_volume_reports_mute_alongside_the_new_level(self) -> None:
+        # The reply carries the whole volume state, so a muted unit stays
+        # visibly muted after a level change rather than silently dropping it.
+        client, _, _ = build(mute=True)
+        self.assertEqual(client.set_volume(30), {"volume": 30, "mute": True})
+
+    def test_set_volume_accepts_the_scale_bounds(self) -> None:
+        for level in (VOLUME_MIN, VOLUME_MAX):
+            with self.subTest(level=level):
+                client, _, _ = build()
+                self.assertEqual(client.set_volume(level)["volume"], level)
+
+    def test_set_volume_rejects_out_of_range_levels(self) -> None:
+        for level in (-1, 101):
+            with self.subTest(level=level):
+                client, _, heos = build()
+                with self.assertRaises(ValueError):
+                    client.set_volume(level)
+                self.assertEqual(heos.commands, [])
+
+    def test_set_volume_rejects_non_integer_levels(self) -> None:
+        client, _, heos = build()
+        with self.assertRaises(ValueError):
+            client.set_volume("40")  # type: ignore[arg-type]
+        self.assertEqual(heos.commands, [])
+
+    def test_set_volume_never_touches_the_telnet_transport(self) -> None:
+        client, telnet, _ = build()
+        client.set_volume(12)
+        self.assertEqual(telnet.commands, [])
+
+    def test_set_volume_on_unreachable_device_raises(self) -> None:
+        client, _, _ = build(fail=True)
+        with self.assertRaises(DeviceError):
+            client.set_volume(30)
 
 
 class ParsingTests(unittest.TestCase):
