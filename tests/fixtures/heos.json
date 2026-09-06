@@ -20,5 +20,22 @@
       "result": "success",
       "message": "pid={pid}&state={mute}"
     }
+  },
+  "player/get_now_playing_media": {
+    "heos": {
+      "command": "player/get_now_playing_media",
+      "result": "success",
+      "message": "pid={pid}"
+    },
+    "payload": {
+      "type": "song",
+      "song": "W oczekiwaniu wiosny",
+      "album": "Dlugosz",
+      "artist": "Leszek Dlugosz",
+      "album_id": "0/0/0",
+      "mid": "0/0/0/2I",
+      "qid": 5,
+      "sid": 1024
+    }
   }
 }

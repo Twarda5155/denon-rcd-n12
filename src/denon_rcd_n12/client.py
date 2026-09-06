@@ -1,8 +1,11 @@
 """Command layer over :mod:`transport`.
 
-Routes each capability to the protocol that actually implements it: power to
-the AVR protocol on port 23, volume and mute to HEOS on 1255. Holding the two
-transports side by side is what makes that routing explicit at the call site.
+Routes each capability to the protocol that actually implements it: power and
+input source to the AVR protocol on port 23, volume and mute to HEOS on 1255.
+Holding the two transports side by side is what makes that routing explicit at
+the call site. Source is the one capability that needs both -- the AVR protocol
+names the input, and only HEOS can say whether the network input is carrying a
+streaming service or a server on the LAN.
 
 Opens no sockets of its own -- everything goes through the injected transports,
 which is what lets the tests run against fakes with the receiver powered off.
@@ -29,7 +32,43 @@ POWER_STANDBY = "standby"
 VOLUME_MIN = 0
 VOLUME_MAX = 100
 
+#: The input names this project uses, mapped to the ``SI`` tokens this unit
+#: actually answers with. Measured 2026-09-06 by cycling every input at the
+#: receiver; see ``docs/reference/web-interface.md``. The tokens are specific to
+#: this model -- ``SIANALOG1`` rather than ``SIAUX``, ``SIHDMIARC`` rather than
+#: ``SIHDMI`` -- so nothing here should be carried to another Denon.
+SOURCES = {
+    "phono": "SIANALOGPHONO",
+    "aux": "SIANALOG1",
+    "cd": "SICD",
+    "optical": "SIOPTICAL1",
+    "tuner": "SITUNER",
+    "hdmi": "SIHDMIARC",
+    "net": "SINET",
+}
+
+#: A streaming service and a DLNA server on the LAN are one input to the AVR
+#: protocol: both read back as ``SINET``. :meth:`DenonClient.get_source`
+#: separates them through HEOS and reports this name for the server. It is a
+#: read-only state -- see :meth:`DenonClient.set_source`.
+SOURCE_SERVER = "server"
+
+#: HEOS source id of the local-media service. A foobar2000 share on the LAN was
+#: measured reporting this generic id rather than one of its own, so comparing
+#: against it is enough to tell a local server from a streaming service.
+LOCAL_MEDIA_SID = 1024
+
+#: Seconds to let an input change settle before reading it back. Unlike the
+#: power delays this one is not measured: writing ``SI`` has never been
+#: exercised on this unit. It only has to clear the protocol's 300-500 ms floor.
+SOURCE_SETTLE_S = 1.0
+
 _PW_FRAME = re.compile(r"PW(ON|STANDBY)")
+_SI_FRAME = re.compile(r"SI[A-Z0-9/]+")
+
+#: Reverse of :data:`SOURCES`. Unambiguous because ``SINET`` appears once there;
+#: the server sense of that token is resolved separately, through HEOS.
+_NAMES = {token: name for name, token in SOURCES.items()}
 
 #: Seconds to let the unit boot after ``PWON`` before reading state back. The
 #: protocol reference estimates 2-5 s before it accepts a follow-up command.
@@ -164,6 +203,125 @@ class DenonClient:
             )
         self.heos.query(f"heos://player/set_volume?pid={self.heos.pid}&level={level}")
         return self.get_volume()
+
+    def get_source(self) -> str:
+        """Read which input the receiver is on.
+
+        Costs one AVR round trip, plus one HEOS round trip in the single case
+        that needs it: ``SINET`` covers both a streaming service and a DLNA
+        server on the LAN, so that token alone cannot say which is playing.
+        Every other input is decided by the ``SI`` reply and asks HEOS nothing.
+
+        Returns:
+            A name from :data:`SOURCES`, or :data:`SOURCE_SERVER` when the
+            network input is carrying local media.
+
+        Raises:
+            DeviceError: If no ``SI`` frame arrived, or it carried a token this
+                unit was never measured returning.
+        """
+        frames = self.telnet.send("SI?", expect=_SI_FRAME.pattern)
+        token = self._token_from(frames)
+        name = _NAMES.get(token)
+        if name is None:
+            raise DeviceError(f"unknown source token {token!r} in reply: {frames!r}")
+        if name != "net":
+            return name
+        return SOURCE_SERVER if self._playing_sid() == LOCAL_MEDIA_SID else name
+
+    def set_source(self, name: str) -> str:
+        """Switch the receiver to an input and read back what it settled on.
+
+        Sending a token the unit already holds is skipped, as in
+        :meth:`set_power`: switching inputs is audible, so a redundant write is
+        worth one query to avoid. The comparison is by token, which is why
+        asking for ``"net"`` while a server is playing changes nothing and
+        reports back ``"server"`` -- the input is already correct, and the
+        readback says what is actually on it.
+
+        ``"server"`` is rejected rather than accepted as an alias for ``"net"``:
+        both would put the unit on the same input, but whether a server or a
+        streaming service then plays is decided by HEOS playback, not by ``SI``.
+        Accepting it would promise a choice this command cannot make.
+
+        Note:
+            Writing ``SI`` has never been exercised against this unit. Reading
+            it is measured; this is not.
+
+        Args:
+            name: An input name from :data:`SOURCES`.
+
+        Returns:
+            The input read back after the command, as :meth:`get_source`
+            reports it.
+
+        Raises:
+            ValueError: If ``name`` is :data:`SOURCE_SERVER`, or is not a known
+                input name.
+            DeviceError: If the receiver could not be reached or read back.
+        """
+        if name == SOURCE_SERVER:
+            raise ValueError(
+                f"{SOURCE_SERVER!r} is a read-only state: select 'net' and start "
+                "playback from the server in HEOS"
+            )
+        if name not in SOURCES:
+            raise ValueError(f"source must be one of {sorted(SOURCES)}, got {name!r}")
+        token = SOURCES[name]
+        current = self.get_source()
+        if self._token_of(current) == token:
+            return current
+        self.telnet.send(token, expect=token, listen=1.5)
+        time.sleep(SOURCE_SETTLE_S)
+        return self.get_source()
+
+    def _playing_sid(self) -> int | None:
+        """Read the HEOS source id of whatever is currently playing.
+
+        Returns:
+            The ``sid`` from ``player/get_now_playing_media``, or ``None`` when
+            the reply carried no payload -- an idle player, for instance.
+
+        Raises:
+            DeviceError: If the HEOS query failed.
+        """
+        reply = self.heos.query(
+            f"heos://player/get_now_playing_media?pid={self.heos.pid}"
+        )
+        sid = reply.get("payload", {}).get("sid")
+        return None if sid is None else int(sid)
+
+    @staticmethod
+    def _token_of(name: str) -> str:
+        """Return the ``SI`` token an input name maps to.
+
+        Args:
+            name: A name from :data:`SOURCES` or :data:`SOURCE_SERVER`.
+
+        Returns:
+            The matching token; the server name resolves to ``SINET``, which is
+            what the receiver reports for it.
+        """
+        return SOURCES["net"] if name == SOURCE_SERVER else SOURCES[name]
+
+    @staticmethod
+    def _token_from(frames: list[str]) -> str:
+        """Pick the source token out of a batch of AVR frames.
+
+        Args:
+            frames: Frames as returned by :meth:`TelnetTransport.send`.
+
+        Returns:
+            The most recent ``SI`` token seen, the reply having possibly
+            arrived alongside an unsolicited ``PW`` heartbeat.
+
+        Raises:
+            DeviceError: If no frame carried a source token.
+        """
+        matches = [f.strip() for f in frames if _SI_FRAME.fullmatch(f.strip())]
+        if not matches:
+            raise DeviceError(f"no SI frame in reply: {frames!r}")
+        return matches[-1]
 
     @staticmethod
     def _power_from(frames: list[str]) -> str:

@@ -1,5 +1,14 @@
 {
-  "_comment": "Recorded AVR port-23 frames, keyed by device power state then command. Frames are CR-separated tokens as returned by Transport.avr.",
+  "_comment": "Recorded AVR port-23 frames, keyed by device power state then command. Frames are CR-separated tokens as returned by Transport.avr. 'sources' holds the SI tokens this unit was measured returning (2026-09-06, every input cycled at the receiver); the fake replays them as a mutable source state, the way the power keys back a mutable power state.",
+  "sources": [
+    "SIANALOGPHONO",
+    "SIANALOG1",
+    "SICD",
+    "SIOPTICAL1",
+    "SITUNER",
+    "SIHDMIARC",
+    "SINET"
+  ],
   "on": {
     "PW?": ["PWON"],
     "PWON": ["PWON"],

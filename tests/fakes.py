@@ -38,14 +38,15 @@ def load_fixture(name: str) -> dict[str, Any]:
 class FakeTelnetTransport:
     """Replays fixture AVR traffic in place of a real receiver.
 
-    Holds a mutable power state so writes are observable, records every command
-    for assertions, and can prepend a stale ``PW`` heartbeat frame to reproduce
-    the interleaving seen on the real port-23 stream.
+    Holds mutable power and source states so writes are observable, records
+    every command for assertions, and can prepend a stale ``PW`` heartbeat
+    frame to reproduce the interleaving seen on the real port-23 stream.
     """
 
     def __init__(
         self,
         power: str = "on",
+        source: str = "SINET",
         heartbeat: bool = False,
         fail: bool = False,
         host: str = "10.0.0.1",
@@ -54,6 +55,7 @@ class FakeTelnetTransport:
 
         Args:
             power: Initial power state, ``"on"`` or ``"standby"``.
+            source: Initial ``SI`` token, one of the fixture's recorded tokens.
             heartbeat: Prepend a stale opposite-state ``PW`` frame to replies.
             fail: Raise :class:`DeviceError` on every call.
             host: Address reported by the transport.
@@ -64,6 +66,10 @@ class FakeTelnetTransport:
         self.fail = fail
         self.commands: list[str] = []
         self._fixture = load_fixture("avr.json")
+        self.sources: list[str] = self._fixture["sources"]
+        if source not in self.sources:
+            raise ValueError(f"no recorded SI token {source!r}")
+        self.source = source
 
     def send(self, command: str, expect: str | None = None, listen: float = 2.5) -> list[str]:
         """Record an AVR command, apply it, and replay the recorded frames.
@@ -86,7 +92,12 @@ class FakeTelnetTransport:
             self.power = "on"
         elif command == "PWSTANDBY":
             self.power = "standby"
-        frames = self._fixture[self.power].get(command)
+        elif command in self.sources:
+            self.source = command
+        if command == "SI?" or command in self.sources:
+            frames = [self.source]
+        else:
+            frames = self._fixture[self.power].get(command)
         if frames is None:
             raise DeviceError(f"no fixture for AVR {command} in state {self.power}")
         if self.heartbeat:
@@ -109,6 +120,7 @@ class FakeHeosTransport:
         mute: bool = False,
         fail: bool = False,
         pid: str = "1234567890",
+        now_playing_sid: int | None = 1024,
     ) -> None:
         """Configure the fake HEOS endpoint.
 
@@ -117,11 +129,15 @@ class FakeHeosTransport:
             mute: Mute state to report.
             fail: Raise :class:`DeviceError` on every call.
             pid: Player id reported by the transport.
+            now_playing_sid: Source id ``get_now_playing_media`` reports. 1024
+                is local media, 3 was measured for TuneIn; ``None`` drops the
+                payload entirely, as an idle player does.
         """
         self.pid = pid
         self.volume = volume
         self.mute = mute
         self.fail = fail
+        self.now_playing_sid = now_playing_sid
         self.commands: list[str] = []
         self._fixture = load_fixture("heos.json")
 
@@ -150,4 +166,9 @@ class FakeHeosTransport:
         response["heos"]["message"] = response["heos"]["message"].format(
             pid=self.pid, level=self.volume, mute="on" if self.mute else "off"
         )
+        if name == "player/get_now_playing_media":
+            if self.now_playing_sid is None:
+                response["payload"] = {}
+            else:
+                response["payload"]["sid"] = self.now_playing_sid
         return response

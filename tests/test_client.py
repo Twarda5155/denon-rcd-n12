@@ -7,7 +7,13 @@ import unittest
 from fakes import FakeHeosTransport, FakeTelnetTransport
 
 from denon_rcd_n12 import client as client_module
-from denon_rcd_n12.client import VOLUME_MAX, VOLUME_MIN, DenonClient
+from denon_rcd_n12.client import (
+    SOURCE_SERVER,
+    SOURCES,
+    VOLUME_MAX,
+    VOLUME_MIN,
+    DenonClient,
+)
 from denon_rcd_n12.transport import DeviceError, _parse_flat_yaml, heos_message
 
 
@@ -17,6 +23,8 @@ def build(
     mute: bool = False,
     heartbeat: bool = False,
     fail: bool = False,
+    source: str = "SICD",
+    now_playing_sid: int | None = 1024,
 ) -> tuple[DenonClient, FakeTelnetTransport, FakeHeosTransport]:
     """Assemble a client over fresh fakes.
 
@@ -26,12 +34,18 @@ def build(
         mute: Mute state the fake reports.
         heartbeat: Interleave a stale ``PW`` frame into AVR replies.
         fail: Make both transports unreachable.
+        source: Initial ``SI`` token of the fake AVR endpoint.
+        now_playing_sid: HEOS source id the fake reports as playing.
 
     Returns:
         The client and both fakes, so tests can assert on recorded commands.
     """
-    telnet = FakeTelnetTransport(power=power, heartbeat=heartbeat, fail=fail)
-    heos = FakeHeosTransport(volume=volume, mute=mute, fail=fail)
+    telnet = FakeTelnetTransport(
+        power=power, heartbeat=heartbeat, fail=fail, source=source
+    )
+    heos = FakeHeosTransport(
+        volume=volume, mute=mute, fail=fail, now_playing_sid=now_playing_sid
+    )
     return DenonClient(telnet, heos), telnet, heos
 
 
@@ -177,6 +191,119 @@ class VolumeTests(unittest.TestCase):
         client, _, _ = build(fail=True)
         with self.assertRaises(DeviceError):
             client.set_volume(30)
+
+
+class SourceTests(unittest.TestCase):
+    """Input selection over the AVR protocol, disambiguated through HEOS."""
+
+    def setUp(self) -> None:
+        """Collapse the post-write settle delay so the suite stays fast."""
+        original = client_module.SOURCE_SETTLE_S
+        client_module.SOURCE_SETTLE_S = 0.0
+        self.addCleanup(setattr, client_module, "SOURCE_SETTLE_S", original)
+
+    def test_get_source_maps_every_measured_token(self) -> None:
+        for name, token in SOURCES.items():
+            with self.subTest(name=name):
+                # SINET is the one token that also needs HEOS; a streaming sid
+                # keeps this case on the plain 'net' answer.
+                client, telnet, _ = build(source=token, now_playing_sid=3)
+                self.assertEqual(client.get_source(), name)
+                self.assertEqual(telnet.commands, ["SI?"])
+
+    def test_get_source_ignores_stale_heartbeat_frame(self) -> None:
+        client, _, _ = build(source="SIANALOG1", heartbeat=True)
+        self.assertEqual(client.get_source(), "aux")
+
+    def test_get_source_without_si_frame_raises(self) -> None:
+        client, telnet, _ = build()
+        telnet.send = lambda *a, **k: ["PWON"]  # type: ignore[method-assign]
+        with self.assertRaises(DeviceError):
+            client.get_source()
+
+    def test_get_source_rejects_unmeasured_token(self) -> None:
+        # Token sets differ by model; a token this unit was never seen
+        # returning is reported rather than guessed at.
+        client, telnet, _ = build()
+        telnet.send = lambda *a, **k: ["SIBT"]  # type: ignore[method-assign]
+        with self.assertRaises(DeviceError):
+            client.get_source()
+
+    def test_get_source_reports_server_for_local_media(self) -> None:
+        # SINET covers both a streaming service and a DLNA server; only the
+        # HEOS source id tells them apart.
+        client, _, _ = build(source="SINET", now_playing_sid=1024)
+        self.assertEqual(client.get_source(), SOURCE_SERVER)
+
+    def test_get_source_reports_net_for_a_streaming_service(self) -> None:
+        client, _, _ = build(source="SINET", now_playing_sid=3)
+        self.assertEqual(client.get_source(), "net")
+
+    def test_get_source_reports_net_when_nothing_is_playing(self) -> None:
+        client, _, _ = build(source="SINET", now_playing_sid=None)
+        self.assertEqual(client.get_source(), "net")
+
+    def test_get_source_asks_heos_only_for_the_network_input(self) -> None:
+        client, _, heos = build(source="SICD")
+        client.get_source()
+        self.assertEqual(heos.commands, [])
+
+    def test_get_source_asks_heos_for_the_network_input(self) -> None:
+        client, _, heos = build(source="SINET")
+        client.get_source()
+        self.assertEqual(
+            heos.commands,
+            [f"heos://player/get_now_playing_media?pid={heos.pid}"],
+        )
+
+    def test_set_source_writes_then_reads_back(self) -> None:
+        client, telnet, _ = build(source="SICD")
+        self.assertEqual(client.set_source("phono"), "phono")
+        self.assertEqual(telnet.commands, ["SI?", "SIANALOGPHONO", "SI?"])
+        self.assertEqual(telnet.source, "SIANALOGPHONO")
+
+    def test_set_source_skips_write_when_already_on_the_input(self) -> None:
+        client, telnet, _ = build(source="SICD")
+        self.assertEqual(client.set_source("cd"), "cd")
+        self.assertEqual(telnet.commands, ["SI?"])
+
+    def test_set_source_net_skips_write_while_a_server_plays(self) -> None:
+        # 'net' and 'server' are one input, so the unit is already where it
+        # needs to be; the readback says what is actually on it.
+        client, telnet, _ = build(source="SINET", now_playing_sid=1024)
+        self.assertEqual(client.set_source("net"), SOURCE_SERVER)
+        self.assertEqual(telnet.commands, ["SI?"])
+
+    def test_set_source_rejects_the_server_name(self) -> None:
+        # Both names would write SINET, but which of them then plays is decided
+        # by HEOS playback, not by SI.
+        client, telnet, _ = build(source="SICD")
+        with self.assertRaises(ValueError):
+            client.set_source(SOURCE_SERVER)
+        self.assertEqual(telnet.commands, [])
+
+    def test_set_source_rejects_unknown_name(self) -> None:
+        client, telnet, _ = build()
+        with self.assertRaises(ValueError):
+            client.set_source("bluetooth")
+        self.assertEqual(telnet.commands, [])
+
+    def test_set_source_rejects_a_raw_token(self) -> None:
+        client, telnet, _ = build()
+        with self.assertRaises(ValueError):
+            client.set_source("SICD")
+        self.assertEqual(telnet.commands, [])
+
+    def test_source_on_unreachable_device_raises(self) -> None:
+        client, _, _ = build(fail=True)
+        with self.assertRaises(DeviceError):
+            client.get_source()
+
+    def test_every_source_name_maps_to_one_token(self) -> None:
+        # SINET is deliberately shared with the server sense of the input, but
+        # no other token may be; the reverse map depends on it.
+        tokens = [t for name, t in SOURCES.items()]
+        self.assertEqual(len(tokens), len(set(tokens)))
 
 
 class ParsingTests(unittest.TestCase):

@@ -1,15 +1,15 @@
 """Command-line entry point.
 
-``serve`` starts the local one-page control app; ``power`` and ``volume`` are
-the same queries and writes without a browser, useful for checking the device
-path when the page misbehaves.
+``serve`` starts the local one-page control app; ``power``, ``volume`` and
+``source`` are the same queries and writes without a browser, useful for
+checking the device path when the page misbehaves.
 """
 
 from __future__ import annotations
 
 import argparse
 
-from .client import VOLUME_MAX, VOLUME_MIN, DenonClient
+from .client import SOURCE_SERVER, SOURCES, VOLUME_MAX, VOLUME_MIN, DenonClient
 from .server import HOST, PORT, serve
 from .transport import DeviceError
 
@@ -38,6 +38,18 @@ def main(argv: list[str] | None = None) -> int:
         "level", nargs="?", type=int, help=f"HEOS level {VOLUME_MIN}-{VOLUME_MAX}"
     )
 
+    source = sub.add_parser("source", help="read or set the input source")
+    source.add_argument(
+        "name",
+        nargs="?",
+        choices=sorted(SOURCES),
+        help=(
+            f"input to select; reading can also report {SOURCE_SERVER!r}, which "
+            "is the network input carrying a server on the LAN and cannot be "
+            "selected directly"
+        ),
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "serve":
@@ -52,12 +64,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(client.set_power(args.state))
             else:
                 print(client.get_power())
-        else:
+        elif args.command == "volume":
             if args.level is None:
                 state = client.get_volume()
             else:
                 state = client.set_volume(args.level)
             print(f"{state['volume']}/100{'  muted' if state['mute'] else ''}")
+        else:
+            if args.name is None:
+                print(client.get_source())
+            else:
+                print(client.set_source(args.name))
     except (DeviceError, OSError, ValueError) as exc:
         print(f"error: {exc}")
         return 1
