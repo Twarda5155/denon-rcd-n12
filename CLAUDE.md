@@ -30,6 +30,9 @@ loopback-only one-page control app over its state.
 - All device I/O goes through `transport.py`. Nothing else opens a socket.
 - Tests must pass with the receiver powered off.
 - Run `pytest -q` before proposing a commit.
+- Update `STATUS.md` and `OPEN-QUESTIONS.md` before proposing a commit.
+  A question that gets answered leaves `OPEN-QUESTIONS.md`: measured facts
+  go to `docs/reference/`, choices go to `docs/decisions/`.
 
 ## Commands
 - Tests: `pytest -q`

@@ -223,26 +223,11 @@ Try port 80 first, then 8080. Status readback is a separate path.
 
 ## Open questions
 
-Resolve these before implementing the local control server
-(`docs/decisions/2026-08-30-local-control-server.md`).
+Moved to `OPEN-QUESTIONS.md` in the repository root, which is the single
+register of what is not yet known. Question numbers were preserved, so
+references to "open question 4" elsewhere in this file still resolve.
 
-1. Which of ports 23, 80, 8080, 1255, 10443 are open — measured **twice**, once
-   powered on and once in standby. The standby result determines which paths the
-   UI can rely on when the unit is asleep.
-2. ~~Full `SI?` token list~~ — **closed 2026-09-06**. All seven inputs measured via
-   `notebooks/02-zrodla-si.ipynb`, including that Music Servers shares `SINET` with
-   TuneIn. Still untested: whether writing `SI<TOKEN>` actually switches the input,
-   which is a separate question from reading it.
-3. Whether `SLP060` / `SLP?` / `SLPOFF` are accepted, and in which digit format.
-4. ~~Whether `PWON` wakes the unit from standby~~ — it does, and a 4 s wait was
-   enough before the follow-up `PW?` (2026-09-06). The *minimum* settle time is
-   still unmeasured.
-5. Whether the `PW` heartbeat appears on a passive port-23 connection.
-6. Whether the HTTP `goform` endpoint exists, and on which port.
-7. HEOS 1255 behaviour in standby: connection refused, empty player list, or errors.
-8. The mapping between HEOS `level` (0–100) and AVR `MV` (two-digit). Set volume
-   via HEOS at 10, 25, 50, 75, then read `MV?` each time. Without this, a single
-   UI slider cannot drive both protocols coherently.
+Facts measured here close questions there.
 
 ## Probe
 
