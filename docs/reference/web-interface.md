@@ -1,9 +1,9 @@
-﻿---
+---
 source: HEOS CLI session against the local unit, Denon RCD-N12 web manual, third-party reverse engineering
 date: 2026-08-30
 status: partial
-verified_against: HEOS CLI 1255, live device, 2026-08-30
-untested: power, standby, sleep, source selection, HTTP goform
+verified_against: HEOS CLI 1255, live device, 2026-08-30; AVR telnet 23, live device, 2026-09-06
+untested: standby, sleep, source *selection* (reading sources is measured), HTTP goform
 ---
 
 # RCD-N12 Control Protocols - Reference
@@ -32,6 +32,68 @@ Responses below were returned by the physical unit.
 - `player/set_volume?level=1` **changed device state**. Write access is confirmed,
   not merely read access.
 
+Measured 2026-09-06 from `notebooks/01-stan-odtwarzacza.ipynb`, unit starting in standby:
+
+- `PW?` → `PWSTANDBY`; `PWON` **woke the unit from standby over the network**, and
+  `PW?` 4 s later returned `PWON`. Open question 4 is answered: network wake works
+  and `WAKE_SETTLE_S = 4.0` was sufficient.
+- `SI?` → `['SINET']`, the first source token read off this unit. The reply carried
+  the token alone — no `PW` heartbeat frame interleaved in a 2.5 s listen window.
+  (The rest of the set was measured the same day; see the sweep table below.)
+- `player/set_volume?level=8` then `player/get_volume` → `8`. No Volume Limit clamp
+  at this level on this unit.
+- `player/get_now_playing_media` → `type: station`, `sid: 3`, with `station`,
+  `artist`, `image_url`, `album_id: s25028` and an `mid` pointing at a TuneIn stream
+  URL. So `sid` 3 is a streaming service (TuneIn), reported while `SI` reads `NET`:
+  the two answer different questions and neither replaces the other.
+
+Source-token sweep, 2026-09-06, `notebooks/02-zrodla-si.ipynb` — the operator cycled
+inputs at the unit while `SI?` was polled every 2 s:
+
+| Display | `SI` token | Evidence |
+|---|---|---|
+| Phono | `SIANALOGPHONO` | read back after switching to it |
+| AUX | `SIANALOG1` | read back after switching to it |
+| No disc (CD) | `SICD` | read back after switching to it |
+| Optical | `SIOPTICAL1` | read back after switching to it (second sweep) |
+| DAB | `SITUNER` | read back after switching to it (second sweep) |
+| HDMI | `SIHDMIARC` | read back after switching to it (second sweep) |
+| TuneIn | `SINET` | read back at rest, three times |
+| Music Servers (DLNA) | `SINET` | caught mid-sweep switching to it, 20:03:36 |
+
+**All seven inputs on this unit are now known.** Two consequences:
+
+- `SINET` is **ambiguous**: TuneIn and a DLNA server (foobar2000) both report it.
+  Which one is playing can only be told from HEOS `get_now_playing_media`, whose
+  `sid` distinguishes the service. A UI that shows "source" needs both reads.
+  Measured while foobar2000 served files off a LAN share: `type: song`, `sid: 1024`,
+  `image_url` pointing at the serving host — and `1024` appears in
+  `browse/get_music_sources` as `heos_server` / "Local Music". So the DLNA server
+  reports the generic Local Music `sid`, **not** a per-server id, and `heos_server`
+  versus `music_service` in that listing is the durable way to tell the two apart.
+  TuneIn for comparison: `type: station`, `sid: 3`, `music_service`.
+- Token names are not predictable from other Denon models and every guess made here
+  was wrong: `SIANALOG1` not `SIAUX`, `SIOPTICAL1` not `SIOPT`, `SIHDMIARC` not
+  `SIHDMI` — while the DAB tuner answers to a plain `SITUNER`. The trailing `1` on
+  `SIANALOG1` and `SIOPTICAL1` suggests a second input of either kind would be `…2`,
+  but this unit has none to check that against.
+
+- The token shape is **not** the one guessed from other models: this unit says
+  `SIANALOG1` for AUX and `SIANALOGPHONO` for Phono, not `SIAUX` / `SIPHONO`.
+  Nothing here should be extrapolated to the three unknown inputs.
+- Music Servers (a foobar2000 DLNA share, playback working) is *indicated* to also
+  report `SINET` — the unit read `SINET` at the end of a sweep that finished on that
+  input — but it was never caught mid-sweep, so it is not confirmed. If it holds,
+  `SI` cannot distinguish TuneIn from a DLNA server and only HEOS
+  `get_now_playing_media` can.
+- `browse/get_music_sources` → 10 entries: TuneIn (`sid` 3), Deezer (5), SoundCloud
+  (9), Tidal (10), Amazon (13), Local Music (1024, `heos_server`), Playlists (1025),
+  History (1026), AUX Input (1027), Favorites (1028).
+- `browse?sid=1027` **succeeds but does not enumerate physical inputs**: it returns a
+  single `heos_service` entry named `Denon` whose `sid` is this player's pid. The
+  documented assumption below is therefore half wrong — the call works, the meaning
+  does not. Whether browsing that pid lists the inputs is untested.
+
 ## Confirmed — external documentation, not tested on this unit
 
 - The RCD-N12 exposes the classic Denon AVR control protocol over **telnet, TCP 23**.
@@ -56,13 +118,14 @@ Responses below were returned by the physical unit.
 ## Inferred or assumed — no evidence either way
 
 - `SLP` sleep-timer syntax is assumed to carry over from DRA-N4 to RCD-N12. Untested.
-- `SI?` is assumed to return this unit's input-source tokens. The actual token set
-  (`SICD`, `SITUNER`, `SIBT`, `SINET`, `SIAUX`, `SIOPT`, …) is **unknown** and varies
-  by model. Do not hardcode until queried.
+- `SI?` returns this unit's current input-source token. The full token set for this
+  unit was measured 2026-09-06 and now lives in the confirmed section above, so this
+  is no longer an assumption.
 - The HTTP `goform` endpoint may or may not exist on this firmware. Some 2023-era
   Denons redirect to `https://<ip>:10443` and reject plain HTTP.
-- HEOS `browse` with `sid=1027` is assumed to enumerate physical inputs, and
-  `browse/play_input` to select them. Unverified; may be redundant with `SI`.
+- HEOS `browse` with `sid=1027` was assumed to enumerate physical inputs. Measured
+  2026-09-06: it does not — it returns one entry pointing back at this player (see
+  above). `browse/play_input` for selecting an input remains unverified.
 - Assumed the unit needs 2–5 s after `PWON` before it accepts further commands.
 - Assumed HEOS port 1255 remains open in standby but returns errors or an empty
   player list. Not measured.
@@ -113,7 +176,7 @@ share the same format, so a reader must tolerate interleaving.
 | `MVUP` / `MVDOWN` | TCP write | — | `MV<nn>` |
 | `MU?` | TCP write | — | `MUON` / `MUOFF` |
 | `MUON` / `MUOFF` | TCP write | — | echo |
-| `SI?` | TCP write | — | `SI<TOKEN>` — token set unknown, must be discovered |
+| `SI?` | TCP write | — | `SI<TOKEN>`; full set for this unit measured, see confirmed section |
 | `SI<TOKEN>` | TCP write | source token | echo |
 | `SLP?` | TCP write | — | `SLP<nnn>` or `SLPOFF` — **assumed** |
 | `SLP<nnn>` | TCP write | 001–120 minutes | echo — **assumed** |
@@ -166,10 +229,14 @@ Resolve these before implementing the local control server
 1. Which of ports 23, 80, 8080, 1255, 10443 are open — measured **twice**, once
    powered on and once in standby. The standby result determines which paths the
    UI can rely on when the unit is asleep.
-2. Full `SI?` response — the authoritative source-token list for this unit.
+2. ~~Full `SI?` token list~~ — **closed 2026-09-06**. All seven inputs measured via
+   `notebooks/02-zrodla-si.ipynb`, including that Music Servers shares `SINET` with
+   TuneIn. Still untested: whether writing `SI<TOKEN>` actually switches the input,
+   which is a separate question from reading it.
 3. Whether `SLP060` / `SLP?` / `SLPOFF` are accepted, and in which digit format.
-4. Whether `PWON` wakes the unit from standby, and how long until it accepts a
-   follow-up command.
+4. ~~Whether `PWON` wakes the unit from standby~~ — it does, and a 4 s wait was
+   enough before the follow-up `PW?` (2026-09-06). The *minimum* settle time is
+   still unmeasured.
 5. Whether the `PW` heartbeat appears on a passive port-23 connection.
 6. Whether the HTTP `goform` endpoint exists, and on which port.
 7. HEOS 1255 behaviour in standby: connection refused, empty player list, or errors.
