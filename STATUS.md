@@ -10,8 +10,9 @@ one route and the page one control.
 
 ## In flight
 
-Source and playback reads: client, API, page, tests and docs all landed
-together; the tree is dirty pending a commit.
+Nothing. Working tree clean, `main` even with `origin/main` at `57df253`.
+Source and playback reads landed in three commits — client, server, docs — each
+green on its own.
 
 ## To do
 
