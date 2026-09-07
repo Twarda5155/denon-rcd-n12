@@ -8,6 +8,7 @@ from fakes import FakeHeosTransport, FakeTelnetTransport
 
 from denon_rcd_n12 import client as client_module
 from denon_rcd_n12.client import (
+    PLAY_STATES,
     SOURCE_SERVER,
     SOURCES,
     VOLUME_MAX,
@@ -25,6 +26,7 @@ def build(
     fail: bool = False,
     source: str = "SICD",
     now_playing_sid: int | None = 1024,
+    play_state: str = "play",
 ) -> tuple[DenonClient, FakeTelnetTransport, FakeHeosTransport]:
     """Assemble a client over fresh fakes.
 
@@ -35,7 +37,9 @@ def build(
         heartbeat: Interleave a stale ``PW`` frame into AVR replies.
         fail: Make both transports unreachable.
         source: Initial ``SI`` token of the fake AVR endpoint.
-        now_playing_sid: HEOS source id the fake reports as playing.
+        now_playing_sid: HEOS source id the fake reports as playing, which
+            selects the recorded metadata payload.
+        play_state: Transport state the fake reports.
 
     Returns:
         The client and both fakes, so tests can assert on recorded commands.
@@ -44,7 +48,11 @@ def build(
         power=power, heartbeat=heartbeat, fail=fail, source=source
     )
     heos = FakeHeosTransport(
-        volume=volume, mute=mute, fail=fail, now_playing_sid=now_playing_sid
+        volume=volume,
+        mute=mute,
+        fail=fail,
+        now_playing_sid=now_playing_sid,
+        play_state=play_state,
     )
     return DenonClient(telnet, heos), telnet, heos
 
@@ -304,6 +312,97 @@ class SourceTests(unittest.TestCase):
         # no other token may be; the reverse map depends on it.
         tokens = [t for name, t in SOURCES.items()]
         self.assertEqual(len(tokens), len(set(tokens)))
+
+
+class PlaybackTests(unittest.TestCase):
+    """Transport state and now-playing metadata over HEOS."""
+
+    def test_reports_the_transport_state(self) -> None:
+        for state in PLAY_STATES:
+            with self.subTest(state=state):
+                client, _, _ = build(play_state=state)
+                self.assertEqual(client.get_playback()["state"], state)
+
+    def test_title_comes_from_song_for_a_track(self) -> None:
+        client, _, _ = build(now_playing_sid=1024)
+        playing = client.get_playback()
+        self.assertEqual(playing["title"], "W oczekiwaniu wiosny")
+        self.assertEqual(playing["artist"], "Leszek Dlugosz")
+        self.assertEqual(playing["album"], "Dlugosz")
+        self.assertEqual(playing["media_type"], "song")
+
+    def test_a_track_carries_no_station(self) -> None:
+        client, _, _ = build(now_playing_sid=1024)
+        self.assertIsNone(client.get_playback()["station"])
+
+    def test_a_stream_reports_track_and_station_separately(self) -> None:
+        # The recorded TuneIn payload fills in both: 'song' is what is on air,
+        # 'station' is the station carrying it. Folding one into the other
+        # would lose whichever the page then wanted to show.
+        client, _, _ = build(now_playing_sid=3)
+        playing = client.get_playback()
+        self.assertEqual(playing["title"], "Deutschland national")
+        self.assertEqual(playing["station"], "Klassik Radio")
+        self.assertEqual(playing["media_type"], "station")
+
+    def test_empty_album_is_reported_as_absent(self) -> None:
+        # The stream recording carries album as an empty string, which is not
+        # a value worth putting on the page.
+        client, _, _ = build(now_playing_sid=3)
+        self.assertIsNone(client.get_playback()["album"])
+
+    def test_player_with_no_media_reports_state_only(self) -> None:
+        client, _, _ = build(now_playing_sid=None, play_state="stop")
+        self.assertEqual(
+            client.get_playback(),
+            {
+                "state": "stop",
+                "title": None,
+                "artist": None,
+                "album": None,
+                "station": None,
+                "media_type": None,
+            },
+        )
+
+    def test_unknown_is_a_state_this_unit_reports(self) -> None:
+        # Undocumented in the HEOS reference, but measured at every transition
+        # on this unit: a caller that treats it as an error would flag a normal
+        # input change as a failure.
+        self.assertIn("unknown", PLAY_STATES)
+        client, _, _ = build(play_state="unknown")
+        self.assertEqual(client.get_playback()["state"], "unknown")
+
+    def test_metadata_survives_a_stopped_transport(self) -> None:
+        # Measured on the device 2026-09-07: a sleeping unit still reports the
+        # last track it played, at state 'stop'. The client must not scrub the
+        # metadata on the strength of the state -- reporting both is what lets
+        # the page say 'stopped' next to a title rather than pretend it plays.
+        client, _, _ = build(now_playing_sid=1024, play_state="stop")
+        playing = client.get_playback()
+        self.assertEqual(playing["state"], "stop")
+        self.assertEqual(playing["title"], "W oczekiwaniu wiosny")
+
+    def test_addresses_the_configured_player(self) -> None:
+        client, _, heos = build()
+        client.get_playback()
+        self.assertEqual(
+            heos.commands,
+            [
+                f"heos://player/get_play_state?pid={heos.pid}",
+                f"heos://player/get_now_playing_media?pid={heos.pid}",
+            ],
+        )
+
+    def test_never_touches_the_telnet_transport(self) -> None:
+        client, telnet, _ = build()
+        client.get_playback()
+        self.assertEqual(telnet.commands, [])
+
+    def test_on_unreachable_device_raises(self) -> None:
+        client, _, _ = build(fail=True)
+        with self.assertRaises(DeviceError):
+            client.get_playback()
 
 
 class ParsingTests(unittest.TestCase):

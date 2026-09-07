@@ -121,6 +121,7 @@ class FakeHeosTransport:
         fail: bool = False,
         pid: str = "1234567890",
         now_playing_sid: int | None = 1024,
+        play_state: str = "play",
     ) -> None:
         """Configure the fake HEOS endpoint.
 
@@ -129,17 +130,28 @@ class FakeHeosTransport:
             mute: Mute state to report.
             fail: Raise :class:`DeviceError` on every call.
             pid: Player id reported by the transport.
-            now_playing_sid: Source id ``get_now_playing_media`` reports. 1024
-                is local media, 3 was measured for TuneIn; ``None`` drops the
-                payload entirely, as an idle player does.
+            now_playing_sid: Source id ``get_now_playing_media`` reports, which
+                selects one of the recorded payloads: 1024 is the DLNA server
+                on the LAN, 3 is TuneIn. ``None`` drops the payload entirely,
+                as a player that has never played anything does.
+            play_state: Transport state to report, one of ``play``, ``pause``,
+                ``stop`` or ``unknown`` -- the last being what the unit was
+                measured answering while a transition settles.
+
+        Raises:
+            ValueError: If no payload was ever recorded for ``now_playing_sid``.
         """
         self.pid = pid
         self.volume = volume
         self.mute = mute
         self.fail = fail
-        self.now_playing_sid = now_playing_sid
+        self.play_state = play_state
         self.commands: list[str] = []
         self._fixture = load_fixture("heos.json")
+        self._payloads: dict[str, Any] = self._fixture["_now_playing"]
+        if now_playing_sid is not None and str(now_playing_sid) not in self._payloads:
+            raise ValueError(f"no recorded now-playing payload for sid {now_playing_sid}")
+        self.now_playing_sid = now_playing_sid
 
     def query(self, command: str) -> dict[str, Any]:
         """Record a HEOS command and replay its recorded response.
@@ -164,11 +176,13 @@ class FakeHeosTransport:
             raise DeviceError(f"no fixture for HEOS {name}")
         response = json.loads(json.dumps(template))
         response["heos"]["message"] = response["heos"]["message"].format(
-            pid=self.pid, level=self.volume, mute="on" if self.mute else "off"
+            pid=self.pid,
+            level=self.volume,
+            mute="on" if self.mute else "off",
+            state=self.play_state,
         )
         if name == "player/get_now_playing_media":
-            if self.now_playing_sid is None:
-                response["payload"] = {}
-            else:
-                response["payload"]["sid"] = self.now_playing_sid
+            sid = self.now_playing_sid
+            payload = {} if sid is None else self._payloads[str(sid)]
+            response["payload"] = json.loads(json.dumps(payload))
         return response

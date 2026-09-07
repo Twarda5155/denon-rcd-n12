@@ -1,5 +1,5 @@
 {
-  "_comment": "Recorded HEOS CLI responses keyed by command name. {pid}, {level} and {mute} are substituted from the fake's state before replay.",
+  "_comment": "Recorded HEOS CLI responses keyed by command name. {pid}, {level}, {mute} and {state} are substituted from the fake's state before replay. '_now_playing' holds get_now_playing_media payloads recorded per HEOS source id, straight out of logs/device.log: 1024 is the foobar2000 DLNA share on the LAN, 3 is TuneIn. Note that the station payload fills in 'song' AND 'station' at once - the track on air and the station carrying it - which is why the client reports them as separate fields. The fake picks a payload by its now_playing_sid and replays an empty one when that is None.",
   "player/get_volume": {
     "heos": {
       "command": "player/get_volume",
@@ -21,21 +21,43 @@
       "message": "pid={pid}&state={mute}"
     }
   },
+  "player/get_play_state": {
+    "heos": {
+      "command": "player/get_play_state",
+      "result": "success",
+      "message": "pid={pid}&state={state}"
+    }
+  },
   "player/get_now_playing_media": {
     "heos": {
       "command": "player/get_now_playing_media",
       "result": "success",
       "message": "pid={pid}"
-    },
-    "payload": {
+    }
+  },
+  "_now_playing": {
+    "1024": {
       "type": "song",
       "song": "W oczekiwaniu wiosny",
       "album": "Dlugosz",
       "artist": "Leszek Dlugosz",
+      "image_url": "http://192.168.3.70:56923/albumart/5ea8568f9c7464e997dae3e0a25e8cf7",
       "album_id": "0/0/0",
       "mid": "0/0/0/2I",
       "qid": 5,
       "sid": 1024
+    },
+    "3": {
+      "type": "station",
+      "song": "Deutschland national",
+      "station": "Klassik Radio",
+      "album": "",
+      "artist": "Klassik Radio",
+      "image_url": "https://cdn-profiles.tunein.com/s25028/images/logod.png",
+      "album_id": "s25028",
+      "mid": "https://stream.klassikradio.de/national/aac-128/tunein",
+      "qid": 1,
+      "sid": 3
     }
   }
 }

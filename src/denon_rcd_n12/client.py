@@ -1,7 +1,8 @@
 """Command layer over :mod:`transport`.
 
 Routes each capability to the protocol that actually implements it: power and
-input source to the AVR protocol on port 23, volume and mute to HEOS on 1255.
+input source to the AVR protocol on port 23, volume, mute and playback to HEOS
+on 1255.
 Holding the two transports side by side is what makes that routing explicit at
 the call site. Source is the one capability that needs both -- the AVR protocol
 names the input, and only HEOS can say whether the network input is carrying a
@@ -46,6 +47,13 @@ SOURCES = {
     "hdmi": "SIHDMIARC",
     "net": "SINET",
 }
+
+#: The transport states this unit reports. All four are measured
+#: (``notebooks/03-odtwarzanie.ipynb``, 2026-09-07): ``stop`` is also what a
+#: sleeping unit answers, and ``unknown`` -- which the HEOS command reference
+#: does not document -- appears for a moment at every transition, including
+#: while an input change settles. Treat it as "ask again", not as an error.
+PLAY_STATES = ("play", "pause", "stop", "unknown")
 
 #: A streaming service and a DLNA server on the LAN are one input to the AVR
 #: protocol: both read back as ``SINET``. :meth:`DenonClient.get_source`
@@ -275,6 +283,63 @@ class DenonClient:
         time.sleep(SOURCE_SETTLE_S)
         return self.get_source()
 
+    def get_playback(self) -> dict[str, Any]:
+        """Read the transport state and what is loaded in it, over HEOS.
+
+        Costs two HEOS round trips: the state and the metadata are separate
+        commands. The title is whichever field the unit filled in -- ``song``
+        for a track, ``station`` for a stream that names no track -- so a
+        caller gets one field instead of having to know which kind of media is
+        playing. A TuneIn stream fills in *both*, ``song`` being the track on
+        air and ``station`` the station carrying it, so the station is reported
+        separately rather than folded into the title.
+
+        The metadata is not evidence that anything is playing. With the unit in
+        standby it still reports the last track of the previous session
+        alongside a ``stop`` state (measured 2026-09-07), so only ``state``
+        says whether there is sound. A caller showing the title is expected to
+        show the state next to it.
+
+        Both fields are read for whichever input is selected, not just the
+        network ones: a CD reports its track, and the AUX input reports itself.
+        They can lag an input change by a second or so, so a read taken
+        immediately after switching inputs may still describe the previous one.
+
+        Returns:
+            Mapping with ``state`` (one of :data:`PLAY_STATES`) and ``title``,
+            ``artist``, ``album``, ``station`` and ``media_type``, each a
+            string or ``None`` when the current input carries no such metadata.
+
+        Raises:
+            DeviceError: If either HEOS query failed.
+        """
+        reply = self.heos.query(f"heos://player/get_play_state?pid={self.heos.pid}")
+        media = self._now_playing()
+        return {
+            "state": heos_message(reply).get("state"),
+            "title": media.get("song") or media.get("station") or None,
+            "artist": media.get("artist") or None,
+            "album": media.get("album") or None,
+            "station": media.get("station") or None,
+            "media_type": media.get("type") or None,
+        }
+
+    def _now_playing(self) -> dict[str, Any]:
+        """Read the HEOS metadata for whatever is loaded in the player.
+
+        Returns:
+            The ``player/get_now_playing_media`` payload, empty when the reply
+            carried none -- a player that has never played anything, for
+            instance.
+
+        Raises:
+            DeviceError: If the HEOS query failed.
+        """
+        reply = self.heos.query(
+            f"heos://player/get_now_playing_media?pid={self.heos.pid}"
+        )
+        return reply.get("payload") or {}
+
     def _playing_sid(self) -> int | None:
         """Read the HEOS source id of whatever is currently playing.
 
@@ -285,10 +350,7 @@ class DenonClient:
         Raises:
             DeviceError: If the HEOS query failed.
         """
-        reply = self.heos.query(
-            f"heos://player/get_now_playing_media?pid={self.heos.pid}"
-        )
-        sid = reply.get("payload", {}).get("sid")
+        sid = self._now_playing().get("sid")
         return None if sid is None else int(sid)
 
     @staticmethod

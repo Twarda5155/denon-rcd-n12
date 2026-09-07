@@ -1,8 +1,8 @@
 """Command-line entry point.
 
-``serve`` starts the local one-page control app; ``power``, ``volume`` and
-``source`` are the same queries and writes without a browser, useful for
-checking the device path when the page misbehaves.
+``serve`` starts the local one-page control app; ``power``, ``volume``,
+``source`` and ``playback`` are the same queries and writes without a browser,
+useful for checking the device path when the page misbehaves.
 """
 
 from __future__ import annotations
@@ -50,6 +50,8 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
+    sub.add_parser("playback", help="read the transport state and what is playing")
+
     args = parser.parse_args(argv)
 
     if args.command == "serve":
@@ -70,11 +72,17 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 state = client.set_volume(args.level)
             print(f"{state['volume']}/100{'  muted' if state['mute'] else ''}")
-        else:
+        elif args.command == "source":
             if args.name is None:
                 print(client.get_source())
             else:
                 print(client.set_source(args.name))
+        else:
+            playing = client.get_playback()
+            # Title and artist only: the remaining fields repeat them often
+            # enough that a one-line summary is clearer without them.
+            detail = " - ".join(p for p in (playing["title"], playing["artist"]) if p)
+            print(f"{playing['state']}  {detail or 'no metadata'}")
     except (DeviceError, OSError, ValueError) as exc:
         print(f"error: {exc}")
         return 1
