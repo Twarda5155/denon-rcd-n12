@@ -1,6 +1,7 @@
 # Input-source naming
 
-Status: implemented in `client.py`; reads verified on the device, writes not
+Status: implemented in `client.py`; reads and writes both verified on the device
+(writes 2026-09-07, CD → Optical → CD, confirmed at the front panel)
 
 ## Context
 

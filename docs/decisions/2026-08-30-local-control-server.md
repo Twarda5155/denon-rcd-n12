@@ -1,6 +1,8 @@
 # Local control server
 
-Status: proposed, not implemented
+Status: accepted; partly implemented. See "What exists" below, kept current as
+of 2026-09-07 — the proposed surface further down is still a proposal and parts
+of it may never be built.
 
 ## Context
 
@@ -33,9 +35,29 @@ falls back to a server-side timer firing `PWSTANDBY` if `SLP` proves unsupported
 - `/api/status.volume` reports the HEOS 0-100 scale. If `MV` readback is ever
   surfaced, it must be a separate field, not silently converted.
 
+## What exists
+
+Built on `http.server`, not Flask: the page and the API need no dependency, and
+the server runs on a bare interpreter. Port 23 is *not* held open, contrary to
+the decision above — the receiver refuses a second connection while one is held,
+which would block manual access, so `transport.py` connects per command and
+paces instead. That is the one part of this record the implementation overruled.
+
+| Path | Method | Response shape |
+|---|---|---|
+| `/api/power` | GET, POST `state=on\|standby\|toggle` | `{ok, power}` |
+| `/api/volume` | GET, POST `level=0-100` | `{ok, volume, mute}` |
+| `/api/source` | GET | `{ok, source}` |
+| `/api/playback` | GET | `{ok, state, title, artist, album, station, media_type}` |
+
+Source and playback are reads only. `SI` writes were verified on the device on
+2026-09-07, so `POST /api/source` is the next route to build; playback transport
+control has not been asked for. Both are additive.
+
 ## API surface
 
-Nothing below exists yet.
+The rest of this table is a proposal from 2026-08-30. The four rows above are
+what actually answers.
 
 | Path | Method | Params | Response shape |
 |---|---|---|---|

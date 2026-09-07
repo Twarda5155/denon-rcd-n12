@@ -2,8 +2,8 @@
 source: HEOS CLI session against the local unit, Denon RCD-N12 web manual, third-party reverse engineering
 date: 2026-08-30
 status: partial
-verified_against: HEOS CLI 1255, live device, 2026-08-30; AVR telnet 23, live device, 2026-09-06
-untested: standby, sleep, source *selection* (reading sources is measured), HTTP goform
+verified_against: HEOS CLI 1255, live device, 2026-08-30 and 2026-09-07 (in standby); AVR telnet 23, live device, 2026-09-06
+untested: sleep, HTTP goform
 ---
 
 # RCD-N12 Control Protocols - Reference
@@ -86,6 +86,100 @@ inputs at the unit while `SI?` was polled every 2 s:
   input — but it was never caught mid-sweep, so it is not confirmed. If it holds,
   `SI` cannot distinguish TuneIn from a DLNA server and only HEOS
   `get_now_playing_media` can.
+Measured 2026-09-07, unit in **standby** throughout, over `transport.py`:
+
+- **HEOS on 1255 answers normally while the unit sleeps.** Not a refused
+  connection, not an empty player list, not an error reply: `player/get_players`
+  returned the full player object (`Denon CEOL`, wifi, serial), `get_volume` →
+  `level=0`, `get_mute` → `off`, `get_play_state` → `state=stop`, and
+  `get_now_playing_media` returned a complete payload. **Open question 7 is
+  answered:** the page can read playback state in standby without special
+  handling. Whether `level=0` is standby forcing the level down or the level
+  genuinely being 0 was not established — the unit was not woken to compare.
+- `player/get_play_state` → `message: "pid=…&state=stop"`. The state is in
+  `message`, not in `payload`, unlike the media metadata.
+- **The metadata outlives what produced it.** In standby the unit still reported
+  the last track of the previous session (`type: song`, `sid: 1024`, song, album
+  and artist from the foobar2000 share) alongside `state=stop`. So
+  `get_now_playing_media` says *what is loaded*, never *whether it is playing*;
+  only `get_play_state` says that. A UI showing a title must show the state
+  beside it or it will claim music is playing to an empty room.
+- `player/get_play_mode` → `repeat=off&shuffle=off`.
+- **A station fills in `song` *and* `station` at once.** From the recorded TuneIn
+  reply: `type: station`, `sid: 3`, `song: "Deutschland national"` (the track on
+  air), `station: "Klassik Radio"`, `artist` repeating the station name, `album`
+  an empty string. A "track name" should therefore prefer `song` and carry
+  `station` as its own field; collapsing the two loses whichever the caller
+  wanted. A DLNA track by contrast has `song`, `album`, `artist` and no
+  `station`.
+
+Measured 2026-09-07 from `notebooks/03-odtwarzanie.ipynb`, unit powered on, the
+operator cycling inputs and working the transport from the remote:
+
+- **HEOS reports a fourth transport state, `unknown`,** which the HEOS command
+  reference does not document. It appears for a poll or two at every transition
+  — starting playback, and switching inputs — and then resolves. It is a
+  settling state, not an error, and any consumer that validates `state` against
+  `play`/`pause`/`stop` will reject a perfectly normal reply.
+- **`pause` is real on this unit** — observed on CD at 22:28:24 and 22:31:12,
+  distinct from `stop`. The full measured set is `play`, `pause`, `stop`,
+  `unknown`.
+- **HEOS knows the metadata for every input, not just the network ones.** This
+  contradicts the expectation that a network protocol would be blind to CD and
+  the analogue inputs. Each input reports its own `sid` and its own title:
+
+  | Input (`SI`) | `sid` | `type` | `song` observed |
+  |---|---|---|---|
+  | `SICD` | 1024 | `station` | `Denon - CD`, then `Track 1` |
+  | `SIANALOG1` (AUX) | 1027 | `station` | `Denon - AUX` |
+  | `SINET`, TuneIn playing | 3 | `station` | `Drift`, station `1.FM Gaia` |
+  | `SINET`, TuneIn stopped | 3 | `station` | `192 kbps mp3` |
+  | `SINET`, DLNA server | 1024 | `song` | the track (2026-09-06) |
+
+  Three consequences. **`type` does not discriminate**: everything above came
+  back as `station` except the DLNA track, so it cannot be used to tell a stream
+  from a disc. **`sid` 1024 is not proof of a DLNA server** — the CD transport
+  reports it too, so the `SINET`-plus-1024 test in `get_source()` is only sound
+  because it is asked exclusively for the `SINET` token. And **`song` is
+  whatever the input has to say**, not necessarily a track: a stopped TuneIn
+  stream puts its bitrate there, and the AUX input its own name.
+- **The metadata lags an input change by about one poll.** At 22:28:36 the unit
+  reported `SIANALOG1` while still carrying the CD's `sid` 1024 and `Track 1`;
+  the AUX values landed on the next read four seconds later. A playback read
+  taken immediately after an input change can therefore describe the previous
+  input.
+- **`state=play` on AUX does not mean audio.** The AUX input reported `play` for
+  the whole time it was selected and then fell to `stop`, with no relationship
+  to what the attached device was doing. The state is meaningful for media the
+  unit itself transports; on a passthrough input it reports the input, not the
+  sound.
+
+**`SI` writes work.** First ever exercised on this unit 2026-09-07, 23:11, with a
+CD playing and the operator watching the front panel:
+
+```
+-> SI?          <- SICD          the starting input
+-> SIOPTICAL1   <- SIOPTICAL1    echo, 1.07 s later
+-> SI?          <- SIOPTICAL1    readback after a 1.0 s settle
+```
+
+The display read `Optical` and the disc went silent, so the unit acted on the
+command rather than merely echoing it. The reverse write (`SICD`) succeeded the
+same way. **Open question 9 is answered.** Three details worth keeping:
+
+- **A write echo is slow relative to a query.** 1.07 s against 23 ms for `SI?`.
+  The unit acts before it answers, so a `listen` window sized for queries would
+  time out on a write. `SOURCE_SETTLE_S = 1.0` is applied *after* that echo and
+  is known sufficient, not known necessary — the same gap in the evidence that
+  open question 10 records for `PWON`.
+- **Switching inputs stops the disc, and switching back does not resume it.**
+  The transport read `stop` on return, with the metadata degraded from
+  `Track 5` to `Denon - CD`, the input's own name. Playback has to be started
+  again at the unit; no `SI` write can do it.
+- **An input carries its own name as `song` when nothing plays on it.**
+  `Denon - CD` here, `Denon - AUX` on AUX. So a title equal to `Denon - …` means
+  the input is idle, not that a track by that name exists.
+
 - `browse/get_music_sources` → 10 entries: TuneIn (`sid` 3), Deezer (5), SoundCloud
   (9), Tidal (10), Amazon (13), Local Music (1024, `heos_server`), Playlists (1025),
   History (1026), AUX Input (1027), Favorites (1028).
@@ -127,8 +221,9 @@ inputs at the unit while `SI?` was polled every 2 s:
   2026-09-06: it does not — it returns one entry pointing back at this player (see
   above). `browse/play_input` for selecting an input remains unverified.
 - Assumed the unit needs 2–5 s after `PWON` before it accepts further commands.
-- Assumed HEOS port 1255 remains open in standby but returns errors or an empty
-  player list. Not measured.
+- HEOS port 1255 in standby was assumed open but degraded — errors or an empty
+  player list. Measured 2026-09-07: it is neither. Every query answered normally,
+  so this is no longer an assumption; see the confirmed section above.
 - HEOS CLI concurrent-connection ceiling assumed to be roughly 4–8. Not measured.
 
 ---
@@ -150,7 +245,7 @@ All responses are single-line JSON of shape
 | `heos://player/volume_down` | TCP write | `pid`, `step=1-10` | echo in `message` |
 | `heos://player/get_mute` | TCP write | `pid` | `message: "pid=…&state=on\|off"` |
 | `heos://player/set_mute` | TCP write | `pid`, `state=on\|off` | echo in `message` |
-| `heos://player/get_play_state` | TCP write | `pid` | `message: "pid=…&state=play\|pause\|stop"` |
+| `heos://player/get_play_state` | TCP write | `pid` | `message: "pid=…&state=play\|pause\|stop\|unknown"`; `unknown` is measured on this unit at transitions and is not in the HEOS reference |
 | `heos://player/set_play_state` | TCP write | `pid`, `state=play\|pause\|stop` | echo in `message` |
 | `heos://player/play_next` | TCP write | `pid` | echo in `message` |
 | `heos://player/play_previous` | TCP write | `pid` | echo in `message` |

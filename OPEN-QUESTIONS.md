@@ -47,15 +47,6 @@ entries stay below only as one-line pointers.
   then 8080.
 - **Status:** open, deliberately deferred — see STATUS.md.
 
-## Q7 — How does HEOS 1255 behave in standby?
-
-- **Why it matters:** determines whether the page can show volume and now-playing
-  while the unit sleeps, or has to grey them out. Connection refused, an empty
-  player list and an error reply each imply different UI handling.
-- **How to settle:** connect and issue `player/get_players` with the unit in
-  standby.
-- **Status:** open.
-
 ## Q8 — What is the mapping between HEOS `level` (0–100) and AVR `MV` (two digits)?
 
 - **Why it matters:** without it a single slider cannot drive both protocols
@@ -65,16 +56,6 @@ entries stay below only as one-line pointers.
   each, with the unit powered on and unmuted. Watch for a Volume Limit clamp set
   in the device menu.
 - **Status:** open. Not blocking while the UI exposes only the HEOS scale.
-
-## Q9 — Does writing `SI<TOKEN>` actually switch the input?
-
-- **Why it matters:** reading sources is measured and shipped; writing is
-  implemented but has never touched the hardware. This is the last unverified
-  write path in the client.
-- **How to settle:** `denon source cd` with the unit powered on, then confirm at
-  the front panel. Start on a harmless input, not Phono.
-- **Status:** open, blocks the source control on the page (it can ship read-only
-  first).
 
 ## Q10 — What is the *minimum* settle time after `PWON`?
 
@@ -94,6 +75,22 @@ entries stay below only as one-line pointers.
   read pattern is visible. Outcome belongs in `docs/decisions/`.
 - **Status:** open.
 
+## Q13 — Can the metadata lag make `get_source()` report `server` for a stream?
+
+- **Why it matters:** `get_source()` calls `SINET` a DLNA server when
+  `get_now_playing_media` reports `sid` 1024. The 2026-09-07 sweep showed the
+  metadata trailing an input change by about one poll — `SIANALOG1` was read
+  while the payload still held the CD's `sid` 1024 — and the CD transport uses
+  that same 1024. So a read taken a second after switching from CD to a
+  streaming service could satisfy both halves of the test and name the input
+  `server` when TuneIn is on it. Never observed; derived from two measurements
+  that were each observed.
+- **How to settle:** switch from CD straight to TuneIn and read `get_source()`
+  immediately, repeatedly. If it misreports, the fix is either a settle delay in
+  `get_source()` or a second read for confirmation — a choice for
+  `docs/decisions/`, since both cost a device transaction.
+- **Status:** open. Affects one label on one input; nothing else depends on it.
+
 ---
 
 ## Closed
@@ -104,3 +101,23 @@ entries stay below only as one-line pointers.
   `docs/decisions/2026-09-06-source-naming.md`. The *write* half became Q9.
 - **Q4 — does `PWON` wake the unit over the network?** Closed 2026-09-06: it
   does, with a 4 s settle. The minimum settle time became Q10.
+- **Q7 — how does HEOS 1255 behave in standby?** Closed 2026-09-07: it behaves
+  normally. Full player list, and volume, mute, play state and now-playing all
+  answer as they do when the unit is awake — so nothing on the page has to be
+  greyed out for standby. Facts in `docs/reference/web-interface.md`. The
+  measurement raised Q12 instead, about the metadata being stale rather than
+  absent.
+- **Q9 — does writing `SI<TOKEN>` actually switch the input?** Closed
+  2026-09-07: it does. `SIOPTICAL1` sent with a CD playing moved the unit to
+  Optical — confirmed at the front panel and by the disc going silent, not by
+  the echo alone — and `SICD` moved it back. The last unverified write path in
+  the client is now verified. Facts in `docs/reference/web-interface.md`; the
+  naming record `docs/decisions/2026-09-06-source-naming.md` no longer says
+  "writes not".
+- **Q12 — on the non-network inputs, is the now-playing metadata empty or
+  stale?** Closed 2026-09-07: neither. HEOS reports live metadata for every
+  input, each with its own `sid` and title — the CD's track, the AUX input's own
+  name — so the page's track readout is honest everywhere, not just on the
+  network inputs. The sweep also turned up an undocumented fourth transport
+  state (`unknown`) and confirmed `pause` exists on this unit. Facts in
+  `docs/reference/web-interface.md`. The one-poll lag it exposed became Q13.
