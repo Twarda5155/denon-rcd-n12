@@ -34,11 +34,15 @@ class ServerTestCase(unittest.TestCase):
         kwargs = dict(self.transport_kwargs)
         fail = bool(kwargs.pop("fail", False))
         self.telnet = FakeTelnetTransport(
-            power=str(kwargs.pop("power", "on")), fail=fail
+            power=str(kwargs.pop("power", "on")),
+            source=str(kwargs.pop("source", "SINET")),
+            fail=fail,
         )
         self.heos = FakeHeosTransport(
             volume=int(kwargs.pop("volume", 20)),
             mute=bool(kwargs.pop("mute", False)),
+            now_playing_sid=kwargs.pop("now_playing_sid", 1024),
+            play_state=str(kwargs.pop("play_state", "play")),
             fail=fail,
         )
         self.httpd = ThreadingHTTPServer(
@@ -185,6 +189,66 @@ class VolumeRouteTests(ServerTestCase):
         self.assertEqual(status, 400)
         self.assertFalse(body["ok"])
         self.assertEqual(self.heos.volume, 42)
+
+
+class SourceRouteTests(ServerTestCase):
+    """``/api/source``, read-only while ``SI`` writes are unverified (Q9)."""
+
+    transport_kwargs: ClassVar[dict[str, Any]] = {"source": "SICD"}
+
+    def test_get_source(self) -> None:
+        status, body = self.get("/api/source")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"ok": True, "source": "cd"})
+
+    def test_post_is_404_and_writes_nothing(self) -> None:
+        # The route is deliberately absent rather than wired to set_source:
+        # no SI write has ever reached this unit.
+        status, _ = self.post("/api/source", "name=phono")
+        self.assertEqual(status, 404)
+        self.assertEqual(self.telnet.source, "SICD")
+
+
+class NetworkSourceRouteTests(ServerTestCase):
+    """``/api/source`` on the one input that needs both protocols to name it."""
+
+    transport_kwargs: ClassVar[dict[str, Any]] = {
+        "source": "SINET",
+        "now_playing_sid": 1024,
+    }
+
+    def test_local_media_reads_as_server(self) -> None:
+        _, body = self.get("/api/source")
+        self.assertEqual(body["source"], "server")
+
+
+class PlaybackRouteTests(ServerTestCase):
+    """``/api/playback``."""
+
+    transport_kwargs: ClassVar[dict[str, Any]] = {
+        "now_playing_sid": 3,
+        "play_state": "pause",
+    }
+
+    def test_get_playback(self) -> None:
+        status, body = self.get("/api/playback")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body,
+            {
+                "ok": True,
+                "state": "pause",
+                "title": "Deutschland national",
+                "artist": "Klassik Radio",
+                "album": None,
+                "station": "Klassik Radio",
+                "media_type": "station",
+            },
+        )
+
+    def test_post_is_404(self) -> None:
+        status, _ = self.post("/api/playback", "state=play")
+        self.assertEqual(status, 404)
 
 
 class KeepAliveFramingTests(ServerTestCase):
@@ -383,6 +447,16 @@ class UnreachableDeviceTests(ServerTestCase):
         self.assertEqual(status, 502)
         self.assertFalse(body["ok"])
         self.assertIn("unreachable", body["error"])
+
+    def test_source_reports_502(self) -> None:
+        status, body = self.get("/api/source")
+        self.assertEqual(status, 502)
+        self.assertFalse(body["ok"])
+
+    def test_playback_reports_502(self) -> None:
+        status, body = self.get("/api/playback")
+        self.assertEqual(status, 502)
+        self.assertFalse(body["ok"])
 
 
 if __name__ == "__main__":

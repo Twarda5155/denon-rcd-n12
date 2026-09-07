@@ -54,9 +54,13 @@
     border-bottom: 1px solid var(--rule);
   }
 
-  dt { color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; font-size: 12px; }
+  dt { color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; font-size: 12px; white-space: nowrap; }
   dd { margin: 0; font-variant-numeric: tabular-nums; }
   dd.pending { color: var(--dim); }
+
+  /* Track titles are the one value here of unbounded length; let them wrap
+     rather than push the layout wider than the column. */
+  dd#track { text-align: right; overflow-wrap: anywhere; }
 
   .actions { display: flex; flex-direction: column; gap: 0.5rem; }
   .actions + .actions { margin-top: 1.25rem; }
@@ -115,6 +119,9 @@
   <dl>
     <div class="row"><dt>power</dt><dd id="power" class="pending">&mdash;</dd></div>
     <div class="row"><dt>volume</dt><dd id="volume" class="pending">&mdash;</dd></div>
+    <div class="row"><dt>source</dt><dd id="source" class="pending">&mdash;</dd></div>
+    <div class="row"><dt>state</dt><dd id="state" class="pending">&mdash;</dd></div>
+    <div class="row"><dt>track</dt><dd id="track" class="pending">&mdash;</dd></div>
   </dl>
 
   <div class="actions">
@@ -130,6 +137,14 @@
       <output id="level-out" class="pending" for="level">20</output>
     </div>
     <button id="set-volume">set volume</button>
+  </div>
+
+  <!-- Reads only, for now. SI writes were verified on the device on
+       2026-09-07, so a source selector is the next control to land here.
+       Playback transport is deliberately not exposed. -->
+  <div class="actions">
+    <button id="check-source">check source</button>
+    <button id="check-playback">check playback</button>
   </div>
 
   <p id="log"></p>
@@ -179,6 +194,26 @@
         slider.value = data.volume;
         show(levelOut, String(data.volume), false);
       }
+      if ("source" in data) show($("source"), data.source, false);
+      if ("state" in data) {
+        show($("state"), data.state, false);
+        const parts = [data.title, data.artist];
+        // The station repeats the artist on a TuneIn stream and repeats the
+        // title on a CD, where the unit fills both fields with the track. Show
+        // it only when it says something the other two do not.
+        if (data.station && data.station !== data.artist && data.station !== data.title) {
+          parts.push(data.station);
+        }
+        const track = parts.filter(Boolean).join("  ·  ");
+        // Dim a title the transport is not actually playing. The unit keeps
+        // reporting the last track it loaded — through a stop, and through
+        // standby — so an undimmed title next to "stop" would be a lie. The
+        // test is for the two states that mean sound rather than against
+        // "stop": the unit also reports "unknown" while a change settles, and
+        // the title is no more current then than it is at a stop.
+        const playing = data.state === "play" || data.state === "pause";
+        show($("track"), track || "—", !track || !playing);
+      }
       say(label + " ok");
     } catch (err) {
       say(err.message, true);
@@ -191,6 +226,8 @@
 
   $("check-power").onclick = () => run("check power", "/api/power");
   $("check-volume").onclick = () => run("check volume", "/api/volume");
+  $("check-source").onclick = () => run("check source", "/api/source");
+  $("check-playback").onclick = () => run("check playback", "/api/playback");
   $("toggle-power").onclick = () =>
     run("toggle power", "/api/power", { ...form, body: "state=toggle" });
   $("set-volume").onclick = () =>

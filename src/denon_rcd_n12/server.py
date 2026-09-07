@@ -1,8 +1,9 @@
 """Localhost control server: one page, a small JSON API, no outbound traffic.
 
-Implements the power and volume slice of the API in
+Implements a slice of the API in
 ``docs/decisions/2026-08-30-local-control-server.md`` on the stdlib
-``http.server``, so it runs on a bare interpreter with nothing installed.
+``http.server``, so it runs on a bare interpreter with nothing installed: power
+and volume both ways, source and playback as reads.
 
 The socket is bound to the loopback address and every asset the page needs is
 inlined, so nothing is fetched from or sent to anything but the receiver on the
@@ -56,7 +57,13 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
     """
 
     class Handler(BaseHTTPRequestHandler):
-        """Serves the single page and the power/volume API."""
+        """Serves the single page and the device API.
+
+        Source and playback are readable but not yet writable. ``SI`` writes
+        were verified on the device on 2026-09-07, so a source route is next;
+        playback transport control was not asked for. Until then a ``POST`` to
+        either falls through to the not-found branch.
+        """
 
         protocol_version = "HTTP/1.1"
         server_version = "denon-rcd-n12"
@@ -116,6 +123,10 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
                 self._run(lambda: {"power": client.get_power()})
             elif path == "/api/volume":
                 self._run(client.get_volume)
+            elif path == "/api/source":
+                self._run(lambda: {"source": client.get_source()})
+            elif path == "/api/playback":
+                self._run(client.get_playback)
             else:
                 self._json({"ok": False, "error": "not found"}, status=404)
 
