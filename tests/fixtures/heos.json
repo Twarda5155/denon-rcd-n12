@@ -14,6 +14,27 @@
       "message": "pid={pid}&level={level}"
     }
   },
+  "player/volume_up": {
+    "heos": {
+      "command": "player/volume_up",
+      "result": "success",
+      "message": "pid={pid}&step={step}"
+    }
+  },
+  "player/volume_down": {
+    "heos": {
+      "command": "player/volume_down",
+      "result": "success",
+      "message": "pid={pid}&step={step}"
+    }
+  },
+  "player/set_mute": {
+    "heos": {
+      "command": "player/set_mute",
+      "result": "success",
+      "message": "pid={pid}&state={mute}"
+    }
+  },
   "player/get_mute": {
     "heos": {
       "command": "player/get_mute",

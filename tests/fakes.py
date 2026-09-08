@@ -169,8 +169,17 @@ class FakeHeosTransport:
             raise DeviceError("unreachable")
         self.commands.append(command)
         name = command.split("heos://", 1)[-1].split("?", 1)[0]
+        params = parse_qs(command.split("?", 1)[-1])
         if name == "player/set_volume":
-            self.volume = int(parse_qs(command.split("?", 1)[-1])["level"][0])
+            self.volume = int(params["level"][0])
+        elif name == "player/set_mute":
+            self.mute = params["state"][0] == "on"
+        elif name in ("player/volume_up", "player/volume_down"):
+            # Relative, and clamped the way the scale is: the device has no
+            # level below 0 or above 100 to step onto.
+            step = int(params["step"][0])
+            level = self.volume + (step if name.endswith("up") else -step)
+            self.volume = max(0, min(100, level))
         template = self._fixture.get(name)
         if template is None:
             raise DeviceError(f"no fixture for HEOS {name}")
@@ -180,6 +189,7 @@ class FakeHeosTransport:
             level=self.volume,
             mute="on" if self.mute else "off",
             state=self.play_state,
+            step=params.get("step", [""])[0],
         )
         if name == "player/get_now_playing_media":
             sid = self.now_playing_sid

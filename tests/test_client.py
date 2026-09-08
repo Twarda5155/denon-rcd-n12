@@ -9,10 +9,14 @@ from fakes import FakeHeosTransport, FakeTelnetTransport
 from denon_rcd_n12 import client as client_module
 from denon_rcd_n12.client import (
     PLAY_STATES,
+    SELECTABLE_SOURCES,
+    SOURCE_NET,
     SOURCE_SERVER,
     SOURCES,
     VOLUME_MAX,
     VOLUME_MIN,
+    VOLUME_STEP_MAX,
+    VOLUME_STEP_MIN,
     DenonClient,
 )
 from denon_rcd_n12.transport import DeviceError, _parse_flat_yaml, heos_message
@@ -201,6 +205,95 @@ class VolumeTests(unittest.TestCase):
             client.set_volume(30)
 
 
+class VolumeStepTests(unittest.TestCase):
+    """Relative volume changes over HEOS."""
+
+    def test_step_up_and_down(self) -> None:
+        client, _, heos = build(volume=20)
+        self.assertEqual(client.step_volume("up")["volume"], 21)
+        self.assertEqual(client.step_volume("down")["volume"], 20)
+        self.assertEqual(heos.volume, 20)
+
+    def test_step_size_is_sent(self) -> None:
+        client, _, heos = build(volume=20)
+        self.assertEqual(client.step_volume("up", 10)["volume"], 30)
+        self.assertIn(
+            f"heos://player/volume_up?pid={heos.pid}&step=10", heos.commands
+        )
+
+    def test_step_accepts_the_bounds(self) -> None:
+        for step in (VOLUME_STEP_MIN, VOLUME_STEP_MAX):
+            with self.subTest(step=step):
+                client, _, _ = build(volume=50)
+                client.step_volume("up", step)
+
+    def test_step_rejects_sizes_outside_the_range(self) -> None:
+        for step in (0, VOLUME_STEP_MAX + 1, -1):
+            with self.subTest(step=step):
+                client, _, heos = build()
+                with self.assertRaises(ValueError):
+                    client.step_volume("up", step)
+                self.assertEqual(heos.commands, [])
+
+    def test_step_rejects_an_unknown_direction(self) -> None:
+        client, _, heos = build()
+        with self.assertRaises(ValueError):
+            client.step_volume("sideways")
+        self.assertEqual(heos.commands, [])
+
+    def test_step_reports_mute_alongside_the_new_level(self) -> None:
+        client, _, _ = build(volume=20, mute=True)
+        self.assertEqual(client.step_volume("up"), {"volume": 21, "mute": True})
+
+    def test_step_never_touches_the_telnet_transport(self) -> None:
+        client, telnet, _ = build()
+        client.step_volume("up")
+        self.assertEqual(telnet.commands, [])
+
+    def test_step_on_unreachable_device_raises(self) -> None:
+        client, _, _ = build(fail=True)
+        with self.assertRaises(DeviceError):
+            client.step_volume("up")
+
+
+class MuteTests(unittest.TestCase):
+    """Mute as a write, measured on the device 2026-09-08."""
+
+    def test_set_mute_on_and_off(self) -> None:
+        client, _, heos = build(mute=False)
+        self.assertEqual(client.set_mute(True)["mute"], True)
+        self.assertEqual(heos.mute, True)
+        self.assertEqual(client.set_mute(False)["mute"], False)
+        self.assertEqual(heos.mute, False)
+
+    def test_set_mute_addresses_the_configured_player(self) -> None:
+        client, _, heos = build(mute=False)
+        client.set_mute(True)
+        self.assertIn(
+            f"heos://player/set_mute?pid={heos.pid}&state=on", heos.commands
+        )
+
+    def test_set_mute_reports_the_level_alongside(self) -> None:
+        client, _, _ = build(volume=42, mute=False)
+        self.assertEqual(client.set_mute(True), {"volume": 42, "mute": True})
+
+    def test_toggle_mute_flips_either_way(self) -> None:
+        client, _, _ = build(mute=False)
+        self.assertEqual(client.toggle_mute()["mute"], True)
+        client, _, _ = build(mute=True)
+        self.assertEqual(client.toggle_mute()["mute"], False)
+
+    def test_mute_never_touches_the_telnet_transport(self) -> None:
+        client, telnet, _ = build()
+        client.toggle_mute()
+        self.assertEqual(telnet.commands, [])
+
+    def test_mute_on_unreachable_device_raises(self) -> None:
+        client, _, _ = build(fail=True)
+        with self.assertRaises(DeviceError):
+            client.toggle_mute()
+
+
 class SourceTests(unittest.TestCase):
     """Input selection over the AVR protocol, disambiguated through HEOS."""
 
@@ -275,20 +368,38 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(client.set_source("cd"), "cd")
         self.assertEqual(telnet.commands, ["SI?"])
 
-    def test_set_source_net_skips_write_while_a_server_plays(self) -> None:
-        # 'net' and 'server' are one input, so the unit is already where it
-        # needs to be; the readback says what is actually on it.
-        client, telnet, _ = build(source="SINET", now_playing_sid=1024)
-        self.assertEqual(client.set_source("net"), SOURCE_SERVER)
-        self.assertEqual(telnet.commands, ["SI?"])
+    def test_set_source_rejects_both_network_names(self) -> None:
+        # Measured 2026-09-08: the unit ignores SINET as a write. Reporting the
+        # input it failed to leave would read as a broken control, so neither
+        # name is accepted and the caller is told why.
+        for name in (SOURCE_NET, SOURCE_SERVER):
+            with self.subTest(name=name):
+                client, telnet, _ = build(source="SICD")
+                with self.assertRaises(ValueError):
+                    client.set_source(name)
+                self.assertEqual(telnet.commands, [])
 
-    def test_set_source_rejects_the_server_name(self) -> None:
-        # Both names would write SINET, but which of them then plays is decided
-        # by HEOS playback, not by SI.
-        client, telnet, _ = build(source="SICD")
+    def test_set_source_rejects_net_even_while_the_unit_is_on_it(self) -> None:
+        # No "already there, nothing to do" shortcut: the name is unwritable,
+        # and answering as though it had worked would teach a caller otherwise.
+        client, telnet, _ = build(source="SINET", now_playing_sid=1024)
         with self.assertRaises(ValueError):
-            client.set_source(SOURCE_SERVER)
+            client.set_source(SOURCE_NET)
         self.assertEqual(telnet.commands, [])
+
+    def test_selectable_sources_are_the_inputs_minus_the_network(self) -> None:
+        self.assertNotIn(SOURCE_NET, SELECTABLE_SOURCES)
+        self.assertEqual(
+            set(SELECTABLE_SOURCES), set(SOURCES) - {SOURCE_NET}
+        )
+
+    def test_get_source_still_reports_the_network_names(self) -> None:
+        # Unwritable is not unreadable: both network states remain things the
+        # unit can be found in.
+        client, _, _ = build(source="SINET", now_playing_sid=3)
+        self.assertEqual(client.get_source(), SOURCE_NET)
+        client, _, _ = build(source="SINET", now_playing_sid=1024)
+        self.assertEqual(client.get_source(), SOURCE_SERVER)
 
     def test_set_source_rejects_unknown_name(self) -> None:
         client, telnet, _ = build()

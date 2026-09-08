@@ -33,6 +33,10 @@ POWER_STANDBY = "standby"
 VOLUME_MIN = 0
 VOLUME_MAX = 100
 
+#: Bounds of the relative step HEOS accepts for ``volume_up``/``volume_down``.
+VOLUME_STEP_MIN = 1
+VOLUME_STEP_MAX = 10
+
 #: The input names this project uses, mapped to the ``SI`` tokens this unit
 #: actually answers with. Measured 2026-09-06 by cycling every input at the
 #: receiver; see ``docs/reference/web-interface.md``. The tokens are specific to
@@ -55,11 +59,25 @@ SOURCES = {
 #: while an input change settles. Treat it as "ask again", not as an error.
 PLAY_STATES = ("play", "pause", "stop", "unknown")
 
+#: The network input, as :meth:`DenonClient.get_source` reports it when a
+#: streaming service is playing. Readable, not selectable -- see
+#: :data:`SELECTABLE_SOURCES`.
+SOURCE_NET = "net"
+
 #: A streaming service and a DLNA server on the LAN are one input to the AVR
 #: protocol: both read back as ``SINET``. :meth:`DenonClient.get_source`
 #: separates them through HEOS and reports this name for the server. It is a
 #: read-only state -- see :meth:`DenonClient.set_source`.
 SOURCE_SERVER = "server"
+
+#: The inputs an ``SI`` write can actually select on this unit. Measured
+#: 2026-09-08: ``SICD`` and ``SIANALOG1`` switch the input within a second,
+#: while ``SINET`` is accepted by the socket, echoed by nothing, and ignored --
+#: the input stayed put across twelve seconds of polling with the unit awake,
+#: and again from standby. The network input appears to be a *consequence* of
+#: HEOS playing something rather than a destination ``SI`` can drive, which is
+#: the same reason :data:`SOURCE_SERVER` was read-only from the start.
+SELECTABLE_SOURCES = tuple(name for name in SOURCES if name != SOURCE_NET)
 
 #: HEOS source id of the local-media service. A foobar2000 share on the LAN was
 #: measured reporting this generic id rather than one of its own, so comparing
@@ -212,6 +230,79 @@ class DenonClient:
         self.heos.query(f"heos://player/set_volume?pid={self.heos.pid}&level={level}")
         return self.get_volume()
 
+    def step_volume(self, direction: str, step: int = 1) -> dict[str, Any]:
+        """Nudge the volume up or down over HEOS.
+
+        Relative, unlike :meth:`set_volume`: the unit applies the step to
+        whatever level it currently holds, so no read is needed first. That
+        makes it the one command in this client a retry could compound -- see
+        the note in :meth:`~denon_rcd_n12.transport._PacedTransport._with_retry`
+        -- at a cost bounded by one extra step.
+
+        Measured on the device 2026-09-08, awake and in standby: 15 to 16 and
+        back, 0 to 1 and back.
+
+        Args:
+            direction: ``"up"`` or ``"down"``.
+            step: Size of the step, 1-10 on the HEOS absolute scale.
+
+        Returns:
+            Mapping with ``volume`` (int, 0-100) and ``mute`` (bool), as
+            :meth:`get_volume` reports them after the step.
+
+        Raises:
+            ValueError: If ``direction`` is not a direction, or ``step`` falls
+                outside the range HEOS accepts.
+            DeviceError: If the receiver rejected the command or could not be
+                read back.
+        """
+        if direction not in ("up", "down"):
+            raise ValueError(f"direction must be 'up' or 'down', got {direction!r}")
+        if not isinstance(step, int) or not VOLUME_STEP_MIN <= step <= VOLUME_STEP_MAX:
+            raise ValueError(
+                f"step must be an integer {VOLUME_STEP_MIN}-{VOLUME_STEP_MAX}, "
+                f"got {step!r}"
+            )
+        self.heos.query(
+            f"heos://player/volume_{direction}?pid={self.heos.pid}&step={step}"
+        )
+        return self.get_volume()
+
+    def set_mute(self, state: bool) -> dict[str, Any]:
+        """Mute or unmute over HEOS and read back what the unit settled on.
+
+        Measured on the device 2026-09-08. Unlike an ``SI`` write, this does
+        not wake a sleeping unit.
+
+        Args:
+            state: ``True`` to mute, ``False`` to unmute.
+
+        Returns:
+            Mapping with ``volume`` (int, 0-100) and ``mute`` (bool), as
+            :meth:`get_volume` reports them after the write.
+
+        Raises:
+            DeviceError: If the receiver rejected the command or could not be
+                read back.
+        """
+        self.heos.query(
+            f"heos://player/set_mute?pid={self.heos.pid}"
+            f"&state={'on' if state else 'off'}"
+        )
+        return self.get_volume()
+
+    def toggle_mute(self) -> dict[str, Any]:
+        """Flip the unit between muted and unmuted.
+
+        Returns:
+            Mapping with ``volume`` (int, 0-100) and ``mute`` (bool), as
+            :meth:`get_volume` reports them after the write.
+
+        Raises:
+            DeviceError: If the receiver could not be reached or read back.
+        """
+        return self.set_mute(not self.get_volume()["mute"])
+
     def get_source(self) -> str:
         """Read which input the receiver is on.
 
@@ -247,34 +338,35 @@ class DenonClient:
         reports back ``"server"`` -- the input is already correct, and the
         readback says what is actually on it.
 
-        ``"server"`` is rejected rather than accepted as an alias for ``"net"``:
-        both would put the unit on the same input, but whether a server or a
-        streaming service then plays is decided by HEOS playback, not by ``SI``.
-        Accepting it would promise a choice this command cannot make.
-
-        Note:
-            Writing ``SI`` has never been exercised against this unit. Reading
-            it is measured; this is not.
+        Both network names are rejected rather than written. ``"server"`` was
+        always a read-only state -- whether a server or a streaming service
+        plays is decided by HEOS, not by ``SI`` -- and ``"net"`` joined it on
+        2026-09-08, when the unit was measured ignoring ``SINET`` outright. The
+        alternative is a call that reports the input it failed to leave, which
+        reads as a broken control rather than an unsupported one.
 
         Args:
-            name: An input name from :data:`SOURCES`.
+            name: An input name from :data:`SELECTABLE_SOURCES`.
 
         Returns:
             The input read back after the command, as :meth:`get_source`
             reports it.
 
         Raises:
-            ValueError: If ``name`` is :data:`SOURCE_SERVER`, or is not a known
-                input name.
+            ValueError: If ``name`` is a network state, or is not a known input
+                name.
             DeviceError: If the receiver could not be reached or read back.
         """
-        if name == SOURCE_SERVER:
+        if name in (SOURCE_SERVER, SOURCE_NET):
             raise ValueError(
-                f"{SOURCE_SERVER!r} is a read-only state: select 'net' and start "
-                "playback from the server in HEOS"
+                f"{name!r} is a read-only state: this unit ignores SINET as a "
+                "write, and shows the network input when HEOS plays something. "
+                "Start playback in HEOS instead."
             )
         if name not in SOURCES:
-            raise ValueError(f"source must be one of {sorted(SOURCES)}, got {name!r}")
+            raise ValueError(
+                f"source must be one of {sorted(SELECTABLE_SOURCES)}, got {name!r}"
+            )
         token = SOURCES[name]
         current = self.get_source()
         if self._token_of(current) == token:

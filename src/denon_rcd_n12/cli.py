@@ -1,15 +1,22 @@
 """Command-line entry point.
 
 ``serve`` starts the local one-page control app; ``power``, ``volume``,
-``source`` and ``playback`` are the same queries and writes without a browser,
-useful for checking the device path when the page misbehaves.
+``mute``, ``source`` and ``playback`` are the same queries and writes without a
+browser, useful for checking the device path when the page misbehaves.
 """
 
 from __future__ import annotations
 
 import argparse
 
-from .client import SOURCE_SERVER, SOURCES, VOLUME_MAX, VOLUME_MIN, DenonClient
+from .client import (
+    SELECTABLE_SOURCES,
+    SOURCE_NET,
+    SOURCE_SERVER,
+    VOLUME_MAX,
+    VOLUME_MIN,
+    DenonClient,
+)
 from .server import HOST, PORT, serve
 from .transport import DeviceError
 
@@ -38,15 +45,19 @@ def main(argv: list[str] | None = None) -> int:
         "level", nargs="?", type=int, help=f"HEOS level {VOLUME_MIN}-{VOLUME_MAX}"
     )
 
+    mute = sub.add_parser("mute", help="read or set mute")
+    mute.add_argument("state", nargs="?", choices=["on", "off", "toggle"])
+
     source = sub.add_parser("source", help="read or set the input source")
     source.add_argument(
         "name",
         nargs="?",
-        choices=sorted(SOURCES),
+        choices=sorted(SELECTABLE_SOURCES),
         help=(
-            f"input to select; reading can also report {SOURCE_SERVER!r}, which "
-            "is the network input carrying a server on the LAN and cannot be "
-            "selected directly"
+            f"input to select; reading can also report {SOURCE_NET!r} and "
+            f"{SOURCE_SERVER!r}, the network input carrying a streaming service "
+            "or a server on the LAN. Neither can be selected: this unit ignores "
+            "SINET as a write"
         ),
     )
 
@@ -72,6 +83,14 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 state = client.set_volume(args.level)
             print(f"{state['volume']}/100{'  muted' if state['mute'] else ''}")
+        elif args.command == "mute":
+            if args.state is None:
+                state = client.get_volume()
+            elif args.state == "toggle":
+                state = client.toggle_mute()
+            else:
+                state = client.set_mute(args.state == "on")
+            print("muted" if state["mute"] else "not muted")
         elif args.command == "source":
             if args.name is None:
                 print(client.get_source())

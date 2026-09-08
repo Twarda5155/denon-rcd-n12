@@ -215,10 +215,18 @@ class _PacedTransport:
     def _with_retry(self, attempt: Callable[[], T], what: str) -> T:
         """Run one transaction, retrying transient device failures.
 
-        Every command these transports issue is a query or an idempotent set
-        (``PWON``, ``PWSTANDBY``), never a relative change, so replaying one
-        cannot compound. Toggling is resolved to an absolute state a layer up
-        for exactly this reason.
+        Almost every command these transports issue is a query or an
+        idempotent set (``PWON``, ``PWSTANDBY``, ``SI<TOKEN>``, ``set_volume``,
+        ``set_mute``), so replaying one cannot compound. Toggling is resolved to
+        an absolute state a layer up for exactly this reason.
+
+        ``player/volume_up`` and ``player/volume_down`` are the exception: they
+        are relative, so a command that reached the unit and then failed to
+        answer is applied twice when replayed. The harm is bounded by one extra
+        step of at most 10 on a 0-100 scale, which is cheaper than the
+        alternative -- a read-modify-write that costs an extra round trip on
+        every press of a volume button and races anyone else changing the level
+        between the read and the write.
 
         Args:
             attempt: The single-shot transaction to run.
