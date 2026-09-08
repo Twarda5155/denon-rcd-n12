@@ -29,14 +29,22 @@ other input is answered from the `SI` reply alone.
 
 `set_source("server")` raises `ValueError`. Both names would write the same
 `SINET`, but what then plays is decided by HEOS playback, not by `SI`, so
-accepting it would promise a choice the command cannot make. The write is also
-skipped when the unit already holds the target token, which is why asking for
-`net` while a server plays changes nothing and reports back `server`.
+accepting it would promise a choice the command cannot make.
+
+**Amended 2026-09-08:** `set_source("net")` now raises too, and `net` is absent
+from `SELECTABLE_SOURCES` and from the page's picker. The unit was measured
+ignoring `SINET` as a write — no echo, no change, awake or asleep — while
+`SICD`, `SIANALOG1` and `SIOPTICAL1` all switch within a second. The old
+"skip the write when the unit already holds the token" path is gone with it:
+it would have answered `net` as though the write had worked. An unsupported
+input reported as an unsupported input beats a control that silently does
+nothing.
 
 ## Consequences
 
-- The API is asymmetric on purpose: `set_source` takes seven names, `get_source`
-  returns eight. The docstring and the CLI help both say so.
+- The API is asymmetric on purpose, and 2026-09-08 widened the gap:
+  `set_source` takes six names, `get_source` returns eight. The docstring and
+  the CLI help both say so.
 - Comparing against a hardcoded `sid` is simpler than deriving server-ness from
   `browse/get_music_sources` at runtime, at the cost of missing a hypothetical
   second local-media source id. The measurement showed a DLNA server reports the
@@ -44,5 +52,10 @@ skipped when the unit already holds the target token, which is why asking for
 - Selecting a *specific* server or service still has no API. If that is wanted,
   it belongs in a playback command built on HEOS `browse`, not in input
   selection.
-- Writing `SI` remains unverified against the hardware. Reading is measured;
-  the first live `set_source` should be done on a harmless input.
+- Writing `SI` was verified on the hardware 2026-09-07 (CD to Optical and
+  back, confirmed at the front panel) and found selective on 2026-09-08: it
+  works for physical inputs and not for the network one.
+- The network input is now unreachable from this project. Getting it back means
+  driving HEOS playback rather than the AVR protocol — open question 17 — which
+  is the same mechanism the third consequence above already pointed at for
+  selecting a specific service.

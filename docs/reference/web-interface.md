@@ -180,6 +180,105 @@ same way. **Open question 9 is answered.** Three details worth keeping:
   `Denon - CD` here, `Denon - AUX` on AUX. So a title equal to `Denon - …` means
   the input is idle, not that a track by that name exists.
 
+**An `SI` write to a sleeping unit wakes it, and is not echoed.** Measured
+2026-09-08, 07:45, unit in standby on `SICD` with no disc loaded:
+
+```
+-> PW?          <- PWSTANDBY
+-> SI?          <- SICD
+-> SIOPTICAL1   <- []            nothing at all, the full 1.5 s window waited out
+-> SI?          <- SIOPTICAL1    1.0 s later
+-> PW?          <- PWON          the write turned the unit on
+```
+
+**Open question 14 is answered**, and with the outcome that costs the most to
+get wrong: selecting an input on a sleeping receiver powers it up. Three things
+follow.
+
+- **A write is not acknowledged in standby.** Awake, `SIOPTICAL1` echoes after
+  1.07 s; asleep, nothing comes back at all. Any code that treats a missing echo
+  as failure would report an error for a command that worked. `set_source()`
+  survives this only because it ignores the echo and re-reads the input
+  afterwards — worth keeping deliberate rather than incidental.
+- **No `PWON` was sent.** The unit woke itself on the strength of an input
+  command, which is a second, undocumented wake path alongside the one open
+  question 4 established.
+- **The AVR protocol answers quickly after this kind of wake.** The readback
+  landed 1.0 s after the write, against the 4 s `WAKE_SETTLE_S` charged after an
+  explicit `PWON`. Whether that generalises is unmeasured; one observation.
+
+**The three remaining HEOS writes, measured 2026-09-08** — each exercised once,
+read back and restored, in standby and again awake, with the unit on `SICD` and
+no disc loaded:
+
+| Command | In standby | Awake | Verdict |
+|---|---|---|---|
+| `player/set_mute?state=on` | readback `on` | readback `on` | works |
+| `player/volume_up?step=1` | 0 → 1 | 15 → 16 | works |
+| `player/volume_down?step=1` | 1 → 0 | 16 → 15 | works |
+| `player/set_play_state?state=pause` | `success`, readback `stop` | `success`, readback `stop` | accepted, no effect |
+
+- **Mute and the volume steps do not wake the unit.** `PW?` read `PWSTANDBY`
+  after each. This is the opposite of an `SI` write, which does wake it, so
+  "any write wakes the receiver" is not a rule that holds.
+- **`result: success` is not evidence that anything changed.** `set_play_state`
+  returned success and echoed `state=pause` in both phases while the readback
+  stayed `stop` — there was nothing to pause. A caller that trusts the result
+  field will report a working transport control that does nothing.
+- **The standby volume level is a separate value from the awake one.** Standby
+  read `0`, and the unit reported `15` immediately after `PWON` — the same 15 it
+  held before sleeping, unaffected by the `0 → 1 → 0` stepping done while it
+  slept. So a level read in standby predicts nothing about what will be heard on
+  waking.
+- **The unit puts itself back into standby when idle.** Woken at 07:50:05 and
+  left alone after 07:50:20, it read `PWSTANDBY` at 07:55:50: at most 5.5
+  minutes with nothing playing. The exact timeout is not measured — see open
+  question 15 — but any state a UI has read can go stale on its own.
+
+**`SINET` is not writable, while other `SI` tokens are.** Measured 2026-09-08
+with the unit confirmed awake, one run isolating the token from everything else:
+
+| Asked for | `set_source` returned | Re-read | Verdict |
+|---|---|---|---|
+| `cd` | `cd` | `cd` | switched |
+| `net` | `cd` | `cd` | **ignored** |
+| `aux` | `aux` | `aux` | switched |
+
+`SINET` drew no echo — `[]` after the full listen window, the same silence a
+standby write gives — and the input did not move across twelve seconds of
+polling at two-second intervals. Two earlier attempts the same day, one from
+standby, behaved identically. `SICD`, `SIANALOG1` and `SIOPTICAL1` all switch
+within a second.
+
+The likely reason, unproven: the network input is not a destination but a
+*consequence*. The unit shows it when HEOS is playing something, which is also
+why a DLNA server and a streaming service are indistinguishable by `SI` alone.
+If that holds, the way to reach it is HEOS playback, not the AVR protocol — see
+open question 17.
+
+**`set_play_state` moves the state machine, but not the way it is documented.**
+On the AUX input, playing, 2026-09-08 11:19:
+
+```
+state=play  -> set_play_state=pause  -> success, echoes state=pause
+                                     -> readback state=stop     (not pause)
+            -> set_play_state=play   -> success
+                                     -> readback state=stop, then unknown
+                                     -> state=play, 15 s after the command
+```
+
+So the command is *not* a no-op — this is the first evidence of that — but on a
+passthrough input `pause` collapses to `stop`, and recovery to `play` takes
+about fifteen seconds through the `unknown` state. Whether the audio itself was
+interrupted is unknown: nobody was at the unit. On media HEOS actually
+transports it remains untested, because every attempt to reach the network
+input failed for the reason above. Open question 16 stays open.
+
+**The reported volume level moved with no command touching it.** `level=30` at
+11:18:36, `level=40` at 11:19:48 — 72 seconds apart, on the AUX input, with
+nobody at the receiver and nothing in the log between the two but play-state
+reads. Unexplained; see open question 18.
+
 - `browse/get_music_sources` → 10 entries: TuneIn (`sid` 3), Deezer (5), SoundCloud
   (9), Tidal (10), Amazon (13), Local Music (1024, `heos_server`), Playlists (1025),
   History (1026), AUX Input (1027), Favorites (1028).

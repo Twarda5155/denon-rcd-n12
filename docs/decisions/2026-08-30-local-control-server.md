@@ -47,12 +47,27 @@ paces instead. That is the one part of this record the implementation overruled.
 |---|---|---|
 | `/api/power` | GET, POST `state=on\|standby\|toggle` | `{ok, power}` |
 | `/api/volume` | GET, POST `level=0-100` | `{ok, volume, mute}` |
-| `/api/source` | GET | `{ok, source}` |
+| `/api/volume/step` | POST `direction=up\|down`, `step=1-10` | `{ok, volume, mute}` |
+| `/api/mute` | POST `state=on\|off\|toggle` | `{ok, volume, mute}` |
+| `/api/source` | GET, POST `name=<input>` | `{ok, source}` |
+| `/api/sources` | GET | `{ok, sources: [...]}` |
 | `/api/playback` | GET | `{ok, state, title, artist, album, station, media_type}` |
 
-Source and playback are reads only. `SI` writes were verified on the device on
-2026-09-07, so `POST /api/source` is the next route to build; playback transport
-control has not been asked for. Both are additive.
+`/api/sources` is the one route that reaches no further than this process: the
+input names are a constant, so the page fills its selector on load without
+spending a paced device transaction. It replaces the proposed `/api/sources`
+shape below — plain names rather than `{id, label}` pairs, because the names
+*are* the labels and a second vocabulary would be one more thing to keep in
+step.
+
+`/api/mute` and `/api/volume/step` return the whole volume state rather than the
+one field they changed, because mute and level are read together anyway and a
+caller that has just muted still wants the level on screen.
+
+Playback is a read. `player/set_play_state` was exercised on this unit on
+2026-09-08 and *accepted* without changing anything — there was nothing playing
+to change — so whether it works is still unknown (open question 16), and this
+project does not ship controls that might do nothing.
 
 ## API surface
 

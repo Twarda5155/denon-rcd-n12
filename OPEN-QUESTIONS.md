@@ -91,6 +91,60 @@ entries stay below only as one-line pointers.
   `docs/decisions/`, since both cost a device transaction.
 - **Status:** open. Affects one label on one input; nothing else depends on it.
 
+## Q15 — How long is the idle timeout before the unit puts itself in standby?
+
+- **Why it matters:** every readout the page shows can go stale without anyone
+  touching anything. It bounds how long a "check power" answer stays true, and
+  it is the strongest argument for a single `/api/status` read over four
+  separate ones taken minutes apart.
+- **How to settle:** wake the unit, leave it alone on an input with nothing
+  playing, and poll `PW?` at a one-minute cadence until it reports standby.
+  Repeat with something playing to see whether playback holds it awake.
+- **Status:** open. Bounded so far at 5.5 minutes or less, from a single
+  unpolled gap on 2026-09-08.
+
+## Q17 — How is the network input selected, if not with `SI`?
+
+- **Why it matters:** it is the only input the page cannot offer. `SINET` is
+  ignored (measured 2026-09-08), so TuneIn and the DLNA server are reachable
+  from the remote and the HEOS app but not from this project. It also blocks
+  Q16, because HEOS-transported media is the only place a pause has a defined
+  meaning.
+- **How to settle:** try HEOS playback as the selector rather than the AVR
+  protocol — `browse/play_stream` on a favourite, or `browse/play_input`, whose
+  syntax is documented but unverified here. Watch `SI?` afterwards to see
+  whether the input follows the playback.
+- **Status:** open. Blocks Q16 and the network entry in the source picker.
+
+## Q18 — What moved the reported volume level with nothing sent?
+
+- **Why it matters:** if the level can change on its own, the page's volume
+  readout decays like the power one, and a step control could be fighting
+  something invisible. It may also be benign — a ramp after an input change, or
+  simply another person with the remote.
+- **How to settle:** poll `player/get_volume` once a minute for a quarter of an
+  hour with nobody near the receiver, on a stable input, and see whether it
+  moves. Repeat on AUX, where it was seen, and on a network input.
+- **Status:** open. One observation: 30 to 40 in 72 seconds on 2026-09-08, and
+  0/muted to 25/unmuted across a later run whose power state was not read.
+
+## Q16 — Does `player/set_play_state` actually control playback?
+
+- **Why it matters:** it is the last capability standing between the page and a
+  play/pause control. The command is *accepted* — `result: success`, the state
+  echoed back — in standby and awake alike, while the readback stays `stop`.
+  That is consistent with two very different worlds: it works and there was
+  simply nothing to pause, or it is a no-op on this model.
+- **How to settle:** start playback at the unit (a disc, or a station), confirm
+  `get_play_state` reads `play`, then send `set_play_state?state=pause` and read
+  it again. It needs media the unit itself transports.
+- **Status:** open, blocks the transport control on the page. Partly advanced
+  2026-09-08: on the AUX *passthrough* input, playing, `pause` did move the
+  state — to `stop`, not `pause` — so the command is not a no-op. That is not
+  the answer, because AUX is not media HEOS transports and nobody was at the
+  unit to say whether the sound stopped. Reaching real HEOS media is blocked on
+  Q17.
+
 ---
 
 ## Closed
@@ -114,6 +168,11 @@ entries stay below only as one-line pointers.
   the client is now verified. Facts in `docs/reference/web-interface.md`; the
   naming record `docs/decisions/2026-09-06-source-naming.md` no longer says
   "writes not".
+- **Q14 — does an `SI` write work while the unit is in standby?** Closed
+  2026-09-08: it works *and wakes the unit*, without a `PWON` and without
+  echoing anything back. Selecting an input therefore powers the receiver on,
+  which the page states in the control's hint and reflects by dimming the power
+  row after a source write. Facts in `docs/reference/web-interface.md`.
 - **Q12 — on the non-network inputs, is the now-playing metadata empty or
   stale?** Closed 2026-09-07: neither. HEOS reports live metadata for every
   input, each with its own `sid` and title — the CD's track, the AUX input's own
