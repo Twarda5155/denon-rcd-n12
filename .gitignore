@@ -5,3 +5,4 @@ config/device.yaml
 __pycache__/
 .pytest_cache/
 notebooks/
+docs/reference/dokumentacja-malego-projektu.docx
