@@ -65,6 +65,11 @@
   .actions { display: flex; flex-direction: column; gap: 0.5rem; }
   .actions + .actions { margin-top: 1.25rem; }
 
+  /* Three buttons that each cost one device transaction, kept on one line so
+     the column does not grow taller than the readouts it belongs to. */
+  .steps { display: flex; gap: 0.5rem; }
+  .steps button { flex: 1; text-align: center; }
+
   .slider {
     display: flex;
     align-items: center;
@@ -102,6 +107,25 @@
   button:active:enabled { background: var(--fg); color: var(--bg); }
   button:disabled { color: var(--dim); cursor: default; }
 
+  select {
+    font: inherit;
+    width: 100%;
+    padding: 0.55rem 0.75rem;
+    color: var(--fg);
+    background: transparent;
+    border: 1px solid var(--rule);
+    border-radius: 0;
+    cursor: pointer;
+  }
+  select:disabled { color: var(--dim); cursor: default; }
+
+  .hint {
+    margin: 0;
+    padding: 0 0.75rem;
+    color: var(--dim);
+    font-size: 12px;
+  }
+
   #log {
     margin: 1.25rem 0 0;
     min-height: 1.5em;
@@ -137,13 +161,21 @@
       <output id="level-out" class="pending" for="level">20</output>
     </div>
     <button id="set-volume">set volume</button>
+    <div class="steps">
+      <button id="volume-down">vol &minus;</button>
+      <button id="volume-up">vol +</button>
+      <button id="toggle-mute">toggle mute</button>
+    </div>
   </div>
 
-  <!-- Reads only, for now. SI writes were verified on the device on
-       2026-09-07, so a source selector is the next control to land here.
-       Playback transport is deliberately not exposed. -->
+  <!-- Playback is a read: HEOS transport control is documented but has never
+       been exercised on this unit, and a button that might do nothing is
+       worse than no button. -->
   <div class="actions">
     <button id="check-source">check source</button>
+    <select id="source-pick" aria-label="input source"></select>
+    <p class="hint">switching stops playback and wakes a sleeping unit</p>
+    <button id="set-source">set source</button>
     <button id="check-playback">check playback</button>
   </div>
 
@@ -152,10 +184,11 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const controls = [...document.querySelectorAll("button, input")];
+  const controls = [...document.querySelectorAll("button, input, select")];
   const log = $("log");
   const slider = $("level");
   const levelOut = $("level-out");
+  const picker = $("source-pick");
 
   function say(text, isError) {
     log.textContent = text;
@@ -194,7 +227,17 @@
         slider.value = data.volume;
         show(levelOut, String(data.volume), false);
       }
-      if ("source" in data) show($("source"), data.source, false);
+      if ("source" in data) {
+        show($("source"), data.source, false);
+        // The picker is a request and the row is the answer, as with the
+        // volume slider. "server" is a state the unit reports but nobody can
+        // select — it is the network input with a LAN server playing on it —
+        // so when that comes back, leave the picker alone and let the row say
+        // it.
+        if ([...picker.options].some((o) => o.value === data.source)) {
+          picker.value = data.source;
+        }
+      }
       if ("state" in data) {
         show($("state"), data.state, false);
         const parts = [data.title, data.artist];
@@ -228,14 +271,50 @@
   $("check-volume").onclick = () => run("check volume", "/api/volume");
   $("check-source").onclick = () => run("check source", "/api/source");
   $("check-playback").onclick = () => run("check playback", "/api/playback");
+  $("set-source").onclick = async () => {
+    await run("set source", "/api/source", {
+      ...form,
+      body: "name=" + encodeURIComponent(picker.value),
+    });
+    // An input write wakes a sleeping unit — measured 2026-09-08, standby to
+    // on with no echo and no PWON sent. So whatever the power row says is no
+    // longer known to hold. Dim it rather than re-read it: the reply is one
+    // more paced device transaction, and the row can say "this was true a
+    // moment ago" for free.
+    show($("power"), $("power").textContent, true);
+  };
   $("toggle-power").onclick = () =>
     run("toggle power", "/api/power", { ...form, body: "state=toggle" });
   $("set-volume").onclick = () =>
     run("set volume", "/api/volume", { ...form, body: "level=" + slider.value });
+  // Relative: the unit applies the step to whatever it currently holds, so
+  // these need no read first and cannot fight a level set at the front panel.
+  $("volume-up").onclick = () =>
+    run("volume up", "/api/volume/step", { ...form, body: "direction=up&step=1" });
+  $("volume-down").onclick = () =>
+    run("volume down", "/api/volume/step", { ...form, body: "direction=down&step=1" });
+  $("toggle-mute").onclick = () =>
+    run("toggle mute", "/api/mute", { ...form, body: "state=toggle" });
 
   // Dim while the slider holds a level the device has not confirmed; solid
   // again once a reply comes back through run().
   slider.oninput = () => show(levelOut, slider.value, true);
+
+  // Fill the picker from the server rather than hardcoding the input names
+  // here: the mapping lives in client.py, where it was measured, and a second
+  // copy in the page would be free to drift from it. This is the one request
+  // the page makes on its own, and it reaches no further than the local
+  // process — the list is a constant, not a device read.
+  (async () => {
+    try {
+      const res = await fetch("/api/sources");
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "request failed");
+      for (const name of data.sources) picker.add(new Option(name, name));
+    } catch (err) {
+      say("could not load the input list: " + err.message, true);
+    }
+  })();
 </script>
 </body>
 </html>

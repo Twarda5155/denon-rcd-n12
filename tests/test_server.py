@@ -15,7 +15,12 @@ from typing import Any, ClassVar
 from fakes import FakeHeosTransport, FakeTelnetTransport
 
 from denon_rcd_n12 import client as client_module
-from denon_rcd_n12.client import DenonClient
+from denon_rcd_n12.client import (
+    SELECTABLE_SOURCES,
+    SOURCE_NET,
+    SOURCE_SERVER,
+    DenonClient,
+)
 from denon_rcd_n12.server import _ControlServer, _handler_class, serve
 
 
@@ -191,21 +196,134 @@ class VolumeRouteTests(ServerTestCase):
         self.assertEqual(self.heos.volume, 42)
 
 
+class VolumeStepRouteTests(ServerTestCase):
+    """``/api/volume/step``."""
+
+    transport_kwargs: ClassVar[dict[str, Any]] = {"volume": 42}
+
+    def test_step_up(self) -> None:
+        status, body = self.post("/api/volume/step", "direction=up&step=3")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"ok": True, "volume": 45, "mute": False})
+
+    def test_step_down(self) -> None:
+        _, body = self.post("/api/volume/step", "direction=down&step=2")
+        self.assertEqual(body["volume"], 40)
+
+    def test_step_defaults_to_one(self) -> None:
+        # A button that has to name its own step size is a button with a bug
+        # waiting in it; one is the smallest useful move.
+        _, body = self.post("/api/volume/step", "direction=up")
+        self.assertEqual(body["volume"], 43)
+
+    def test_missing_direction_is_400(self) -> None:
+        status, _ = self.post("/api/volume/step", "step=1")
+        self.assertEqual(status, 400)
+        self.assertEqual(self.heos.volume, 42)
+
+    def test_out_of_range_step_is_400(self) -> None:
+        status, _ = self.post("/api/volume/step", "direction=up&step=99")
+        self.assertEqual(status, 400)
+        self.assertEqual(self.heos.volume, 42)
+
+    def test_non_numeric_step_is_400(self) -> None:
+        status, body = self.post("/api/volume/step", "direction=up&step=lots")
+        self.assertEqual(status, 400)
+        self.assertIn("step", body["error"])
+
+
+class MuteRouteTests(ServerTestCase):
+    """``/api/mute``."""
+
+    transport_kwargs: ClassVar[dict[str, Any]] = {"volume": 42, "mute": False}
+
+    def test_toggle_is_the_default(self) -> None:
+        status, body = self.post("/api/mute", "")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"ok": True, "volume": 42, "mute": True})
+
+    def test_explicit_on_and_off(self) -> None:
+        _, body = self.post("/api/mute", "state=on")
+        self.assertTrue(body["mute"])
+        _, body = self.post("/api/mute", "state=off")
+        self.assertFalse(body["mute"])
+
+    def test_bad_state_is_400(self) -> None:
+        status, body = self.post("/api/mute", "state=quiet")
+        self.assertEqual(status, 400)
+        self.assertFalse(body["ok"])
+        self.assertFalse(self.heos.mute)
+
+
 class SourceRouteTests(ServerTestCase):
-    """``/api/source``, read-only while ``SI`` writes are unverified (Q9)."""
+    """``/api/source`` and ``/api/sources``."""
 
     transport_kwargs: ClassVar[dict[str, Any]] = {"source": "SICD"}
+
+    def setUp(self) -> None:
+        """Collapse the post-write settle delay so the suite stays fast."""
+        super().setUp()
+        original = client_module.SOURCE_SETTLE_S
+        client_module.SOURCE_SETTLE_S = 0.0
+        self.addCleanup(setattr, client_module, "SOURCE_SETTLE_S", original)
 
     def test_get_source(self) -> None:
         status, body = self.get("/api/source")
         self.assertEqual(status, 200)
         self.assertEqual(body, {"ok": True, "source": "cd"})
 
-    def test_post_is_404_and_writes_nothing(self) -> None:
-        # The route is deliberately absent rather than wired to set_source:
-        # no SI write has ever reached this unit.
-        status, _ = self.post("/api/source", "name=phono")
-        self.assertEqual(status, 404)
+    def test_set_source(self) -> None:
+        status, body = self.post("/api/source", "name=optical")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"ok": True, "source": "optical"})
+        self.assertEqual(self.telnet.source, "SIOPTICAL1")
+
+    def test_unknown_name_is_400_and_writes_nothing(self) -> None:
+        status, body = self.post("/api/source", "name=bluetooth")
+        self.assertEqual(status, 400)
+        self.assertFalse(body["ok"])
+        self.assertEqual(self.telnet.source, "SICD")
+
+    def test_missing_name_is_400(self) -> None:
+        # No default: picking an input for a caller that named none would be
+        # an audible guess.
+        status, body = self.post("/api/source", "")
+        self.assertEqual(status, 400)
+        self.assertFalse(body["ok"])
+        self.assertEqual(self.telnet.source, "SICD")
+
+    def test_server_name_is_refused(self) -> None:
+        # A read-only state: both names put the unit on the same input, but
+        # what then plays is decided by HEOS playback, not by SI.
+        status, body = self.post("/api/source", "name=server")
+        self.assertEqual(status, 400)
+        self.assertIn("read-only", body["error"])
+        self.assertEqual(self.telnet.source, "SICD")
+
+    def test_raw_token_is_refused(self) -> None:
+        status, _ = self.post("/api/source", "name=SIOPTICAL1")
+        self.assertEqual(status, 400)
+        self.assertEqual(self.telnet.source, "SICD")
+
+    def test_sources_lists_the_selectable_inputs_and_touches_no_device(self) -> None:
+        status, body = self.get("/api/sources")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"ok": True, "sources": list(SELECTABLE_SOURCES)})
+        self.assertEqual(self.telnet.commands, [])
+        self.assertEqual(self.heos.commands, [])
+
+    def test_sources_excludes_both_network_names(self) -> None:
+        # The page builds its picker from this list, so a name the write route
+        # refuses must not appear in it. 'net' joined 'server' here on
+        # 2026-09-08, when the unit was measured ignoring SINET as a write.
+        _, body = self.get("/api/sources")
+        self.assertNotIn(SOURCE_SERVER, body["sources"])
+        self.assertNotIn(SOURCE_NET, body["sources"])
+
+    def test_net_is_refused_as_a_write(self) -> None:
+        status, body = self.post("/api/source", "name=net")
+        self.assertEqual(status, 400)
+        self.assertIn("read-only", body["error"])
         self.assertEqual(self.telnet.source, "SICD")
 
 
@@ -457,6 +575,19 @@ class UnreachableDeviceTests(ServerTestCase):
         status, body = self.get("/api/playback")
         self.assertEqual(status, 502)
         self.assertFalse(body["ok"])
+
+    def test_set_source_reports_502(self) -> None:
+        status, body = self.post("/api/source", "name=cd")
+        self.assertEqual(status, 502)
+        self.assertFalse(body["ok"])
+        self.assertIn("unreachable", body["error"])
+
+    def test_sources_still_lists_inputs(self) -> None:
+        # The list is a constant, so it answers whether or not the receiver
+        # does; the page can draw its picker while the unit is unplugged.
+        status, body = self.get("/api/sources")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["sources"], list(SELECTABLE_SOURCES))
 
 
 if __name__ == "__main__":

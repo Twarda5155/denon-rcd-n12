@@ -2,8 +2,8 @@
 
 Implements a slice of the API in
 ``docs/decisions/2026-08-30-local-control-server.md`` on the stdlib
-``http.server``, so it runs on a bare interpreter with nothing installed: power
-and volume both ways, source and playback as reads.
+``http.server``, so it runs on a bare interpreter with nothing installed: power,
+volume, mute and source both ways, playback as a read.
 
 The socket is bound to the loopback address and every asset the page needs is
 inlined, so nothing is fetched from or sent to anything but the receiver on the
@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from .client import DenonClient
+from .client import SELECTABLE_SOURCES, DenonClient
 from .transport import DeviceError
 
 HOST = "127.0.0.1"
@@ -27,14 +27,18 @@ PORT = 8712
 INDEX = Path(__file__).resolve().parent / "static" / "index.html"
 
 
-def _level(raw: str) -> int:
-    """Parse a ``level`` form value into an integer.
+def _whole(raw: str, field: str) -> int:
+    """Parse a numeric form value into an integer.
+
+    Range is left to the client, which owns the bounds and reports them; this
+    only separates "not a number at all" from a device failure.
 
     Args:
         raw: The raw form value.
+        field: Name of the field, used in the error message.
 
     Returns:
-        The level as an integer.
+        The value as an integer.
 
     Raises:
         ValueError: If ``raw`` is missing or not a whole number, which the
@@ -43,7 +47,7 @@ def _level(raw: str) -> int:
     try:
         return int(raw)
     except ValueError:
-        raise ValueError(f"level must be a whole number, got {raw!r}") from None
+        raise ValueError(f"{field} must be a whole number, got {raw!r}") from None
 
 
 def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
@@ -59,10 +63,10 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         """Serves the single page and the device API.
 
-        Source and playback are readable but not yet writable. ``SI`` writes
-        were verified on the device on 2026-09-07, so a source route is next;
-        playback transport control was not asked for. Until then a ``POST`` to
-        either falls through to the not-found branch.
+        Playback is readable but not writable: transport control over HEOS is
+        documented but has never been exercised on this unit, and a control
+        that might do nothing is worse than no control. A ``POST`` to it falls
+        through to the not-found branch.
         """
 
         protocol_version = "HTTP/1.1"
@@ -123,6 +127,11 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
                 self._run(lambda: {"power": client.get_power()})
             elif path == "/api/volume":
                 self._run(client.get_volume)
+            elif path == "/api/sources":
+                # The only route that touches no device: the input names are a
+                # constant, so the page can fill its selector on load without
+                # spending a paced transaction on the receiver.
+                self._json({"ok": True, "sources": list(SELECTABLE_SOURCES)})
             elif path == "/api/source":
                 self._run(lambda: {"source": client.get_source()})
             elif path == "/api/playback":
@@ -170,7 +179,7 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
             return parse_qs(self.rfile.read(length).decode("utf-8"))
 
         def do_POST(self) -> None:
-            """Route POST requests: a power change or a volume change."""
+            """Route POST requests: power, volume, mute or input changes."""
             path = urlparse(self.path).path
             form = self._form()  # drained first, whatever the path turns out to be
             if form is None:
@@ -179,6 +188,12 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
                 self._power(form)
             elif path == "/api/volume":
                 self._volume(form)
+            elif path == "/api/volume/step":
+                self._step(form)
+            elif path == "/api/mute":
+                self._mute(form)
+            elif path == "/api/source":
+                self._source(form)
             else:
                 self._json({"ok": False, "error": "not found"}, status=404)
 
@@ -204,7 +219,51 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
                 form: Decoded form parameters carrying ``level``.
             """
             raw = (form.get("level") or [""])[0]
-            self._run(lambda: client.set_volume(_level(raw)))
+            self._run(lambda: client.set_volume(_whole(raw, "level")))
+
+        def _step(self, form: dict[str, list[str]]) -> None:
+            """Apply a relative volume change.
+
+            Args:
+                form: Decoded form parameters carrying ``direction`` and an
+                    optional ``step``, which defaults to the smallest one.
+            """
+            direction = (form.get("direction") or [""])[0]
+            raw = (form.get("step") or ["1"])[0]
+            self._run(lambda: client.step_volume(direction, _whole(raw, "step")))
+
+        def _mute(self, form: dict[str, list[str]]) -> None:
+            """Apply a mute write.
+
+            Args:
+                form: Decoded form parameters; ``state`` defaults to ``toggle``,
+                    as it does for power — it is what a button wants.
+            """
+            state = (form.get("state") or ["toggle"])[0]
+            if state == "toggle":
+                self._run(client.toggle_mute)
+            elif state in ("on", "off"):
+                self._run(lambda: client.set_mute(state == "on"))
+            else:
+                self._json(
+                    {"ok": False, "error": f"mute state must be on, off or toggle, got {state!r}"},
+                    status=400,
+                )
+
+        def _source(self, form: dict[str, list[str]]) -> None:
+            """Apply a source write.
+
+            The name is passed through unvalidated: ``set_source`` already
+            rejects an unknown input and the read-only ``server`` name, with a
+            message worth more than anything this layer could invent, and
+            ``_run`` turns that into a 400. A missing ``name`` reaches it as
+            the empty string and is refused the same way.
+
+            Args:
+                form: Decoded form parameters carrying ``name``.
+            """
+            name = (form.get("name") or [""])[0]
+            self._run(lambda: {"source": client.set_source(name)})
 
     return Handler
 
