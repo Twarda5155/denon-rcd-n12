@@ -1,4 +1,4 @@
-# Status — updated 2026-09-08
+# Status — updated 2026-09-10
 
 ## Next step
 
@@ -11,8 +11,7 @@ follows the playback.
 
 ## In flight
 
-Everything from 2026-09-08 — the source selector, mute, volume steps, and the
-measurements behind them. Tests and docs done, tree dirty pending a commit.
+Nothing. Working tree clean, `main` even with `origin/main`.
 
 ## To do
 
@@ -53,23 +52,24 @@ Roughly in value order.
   `GET /api/sources` and `/api/playback`.
   Connection desync, chunked bodies and port collisions are covered by tests.
 - `static/index.html` — dependency-free single page, fetches nothing off the
-  machine. Reads out power, volume, source, transport state and track; the
-  track is shown solid only at `play` and `pause`, because the unit keeps
-  reporting the last thing it loaded through a stop and through standby.
-  Writes power, volume (absolute and by steps), mute and the input. The input
-  picker is filled from `/api/sources` rather than from a copy of the names in
-  the page, and it
-  behaves as the volume slider does — the control is a request, the row above
-  is the device's answer. After a source write the power row is dimmed rather
-  than re-read, because an input write wakes a sleeping unit (Q14) and the row
-  can no longer be trusted.
+  machine. Two columns of controls under one shared block of readouts, both
+  columns starting at the top of the grid so the first button of each lines up;
+  a narrow viewport collapses them back to one column. Reads out power, volume,
+  source, transport state and track; writes power, volume (absolute and by
+  steps), mute and the input. Two rules keep it from lying: the track is shown
+  solid only at `play` and `pause`, because the unit keeps reporting the last
+  thing it loaded through a stop and through standby, and the power row is
+  dimmed after a source write, because an input write wakes a sleeping unit
+  (Q14). The input picker is filled from `/api/sources` rather than from a copy
+  of the names in the page, and behaves as the volume slider does — the control
+  is a request, the row above is the device's answer.
 - `cli.py` — `serve`, `power`, `volume`, `mute`, `source`, `playback`.
 - Corrected 2026-09-08: `net` is not a writable input on this unit. `SINET` is
   ignored, so `set_source` refuses both network names, `/api/sources` and the
   page's picker list six inputs rather than seven, and the CLI's choices match.
   Yesterday's selector would have offered an input that silently did nothing.
 - Tests: 131 passed, 29 subtests, all against fakes with the receiver powered
-  off (run 2026-09-08). The HEOS fixture now carries real recorded now-playing
+  off (run 2026-09-10). The HEOS fixture now carries real recorded now-playing
   payloads for both a DLNA track and a TuneIn station.
 - `docs/reference/web-interface.md` — protocol facts graded by evidence level;
   all seven input tokens measured, plus the 2026-09-07 standby and playback

@@ -29,7 +29,7 @@
     font: 14px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
   }
 
-  main { width: 22rem; padding: 2rem 1.5rem; }
+  main { width: min(34rem, 100%); padding: 2rem 1.5rem; }
 
   h1 {
     margin: 0 0 1.5rem;
@@ -61,6 +61,23 @@
   /* Track titles are the one value here of unbounded length; let them wrap
      rather than push the layout wider than the column. */
   dd#track { text-align: right; overflow-wrap: anywhere; }
+
+  /* Two columns of controls under one shared block of readouts. Both columns
+     start at the top of the grid, so the first button of each — check power
+     and check source — sits on the same line. */
+  .panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+    gap: 1.25rem;
+  }
+  .column { display: flex; flex-direction: column; }
+
+  /* Narrow viewports get the old single column back rather than two columns
+     too cramped for a button to hold its label. */
+  @media (max-width: 32rem) {
+    .panels { grid-template-columns: 1fr; }
+  }
 
   .actions { display: flex; flex-direction: column; gap: 0.5rem; }
   .actions + .actions { margin-top: 1.25rem; }
@@ -148,35 +165,39 @@
     <div class="row"><dt>track</dt><dd id="track" class="pending">&mdash;</dd></div>
   </dl>
 
-  <div class="actions">
-    <button id="check-power">check power</button>
-    <button id="toggle-power">toggle power</button>
-  </div>
+  <div class="panels">
+    <div class="column">
+      <div class="actions">
+        <button id="check-power">check power</button>
+        <button id="toggle-power">toggle power</button>
+      </div>
 
-  <div class="actions">
-    <button id="check-volume">check volume</button>
-    <div class="slider">
-      <input id="level" type="range" min="0" max="100" step="1" value="20"
-             aria-label="volume level">
-      <output id="level-out" class="pending" for="level">20</output>
+      <div class="actions">
+        <button id="check-volume">check volume</button>
+        <div class="slider">
+          <input id="level" type="range" min="0" max="100" step="1" value="20"
+                 aria-label="volume level">
+          <output id="level-out" class="pending" for="level">20</output>
+        </div>
+        <button id="set-volume">set volume</button>
+        <div class="steps">
+          <button id="volume-down">vol &minus;</button>
+          <button id="volume-up">vol +</button>
+        </div>
+        <button id="toggle-mute">toggle mute</button>
+      </div>
     </div>
-    <button id="set-volume">set volume</button>
-    <div class="steps">
-      <button id="volume-down">vol &minus;</button>
-      <button id="volume-up">vol +</button>
-      <button id="toggle-mute">toggle mute</button>
-    </div>
-  </div>
 
-  <!-- Playback is a read: HEOS transport control is documented but has never
-       been exercised on this unit, and a button that might do nothing is
-       worse than no button. -->
-  <div class="actions">
-    <button id="check-source">check source</button>
-    <select id="source-pick" aria-label="input source"></select>
-    <p class="hint">switching stops playback and wakes a sleeping unit</p>
-    <button id="set-source">set source</button>
-    <button id="check-playback">check playback</button>
+    <!-- Playback is a read: HEOS transport control is documented but has never
+         been exercised on this unit, and a button that might do nothing is
+         worse than no button. -->
+    <div class="actions">
+      <button id="check-playback">check playback</button>
+      <button id="check-source">check source</button>
+      <select id="source-pick" aria-label="input source"></select>
+      <p class="hint">switching stops playback and wakes a sleeping unit</p>
+      <button id="set-source">set source</button>
+    </div>
   </div>
 
   <p id="log"></p>
