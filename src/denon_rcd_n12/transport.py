@@ -54,6 +54,11 @@ RETRY_BACKOFF_S = 1.0
 AVR_PORT = 23
 HEOS_PORT = 1255
 
+#: Marker HEOS puts in ``message`` when it is acknowledging a command rather
+#: than answering it. The answer arrives as a second message on the same
+#: socket. Measured 2026-09-11 on ``browse/browse``.
+UNDER_PROCESS = "command under process"
+
 T = TypeVar("T")
 
 _logger = logging.getLogger("denon_rcd_n12.device")
@@ -416,6 +421,14 @@ class HeosTransport(_PacedTransport):
                             _log("<-", f"HEOS {line.decode('utf-8', 'replace')}")
                             if heos.get("result") != "success":
                                 raise DeviceError(f"HEOS {want}: {heos.get('message')}")
+                            if UNDER_PROCESS in heos.get("message", ""):
+                                # A slow command -- browsing a source, so far --
+                                # is acknowledged immediately with an empty
+                                # payload, and the real answer follows as a
+                                # second message on this same socket. Returning
+                                # the acknowledgement would hand the caller an
+                                # empty result that looks like an empty source.
+                                continue
                             return obj
             except OSError as exc:
                 raise DeviceError(f"HEOS {want}: {exc}") from exc

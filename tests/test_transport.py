@@ -1,7 +1,8 @@
 """Transport-layer tests: retry policy, device logging, fake/real interface sync.
 
 Nothing here opens a socket. The retry policy is exercised through injected
-callables and the logger through a redirected log path.
+callables, the logger through a redirected log path, and the HEOS read loop
+through a scripted stand-in that replays bytes and connects to nothing.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, Self
 
 from fakes import FakeHeosTransport, FakeTelnetTransport
 
@@ -202,6 +203,132 @@ class PacingTests(TempLogMixin):
         with heos._paced():
             pass
         self.assertGreaterEqual(time.monotonic() - start, 0.2)
+
+
+class ScriptedSocket:
+    """A socket that replays prepared bytes. Connects to nothing.
+
+    Enough of the interface for :meth:`HeosTransport._query_once`: the context
+    manager, a discarded ``sendall``, and ``recv`` handing back one prepared
+    chunk at a time before behaving like a peer that has gone quiet.
+    """
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        """Prepare the chunks ``recv`` will return, in order.
+
+        Args:
+            chunks: Byte strings to hand out, one per ``recv`` call.
+        """
+        self.chunks = list(chunks)
+        self.sent: list[bytes] = []
+
+    def __enter__(self) -> Self:
+        """Enter the context, as a real socket does."""
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        """Leave the context; there is nothing to close."""
+
+    def settimeout(self, timeout: float) -> None:
+        """Accept and ignore a timeout.
+
+        Args:
+            timeout: Ignored.
+        """
+
+    def sendall(self, data: bytes) -> None:
+        """Record what was written.
+
+        Args:
+            data: The bytes the transport sent.
+        """
+        self.sent.append(data)
+
+    def recv(self, size: int) -> bytes:
+        """Return the next prepared chunk.
+
+        Args:
+            size: Ignored.
+
+        Returns:
+            The next chunk, or raises once the script is exhausted.
+
+        Raises:
+            TimeoutError: When nothing is left, which is how a real socket
+                reports a peer that has stopped talking.
+        """
+        if not self.chunks:
+            raise TimeoutError
+        return self.chunks.pop(0)
+
+
+class DeferredReplyTests(TempLogMixin):
+    """HEOS answers a slow command twice; only the second one is the answer."""
+
+    def setUp(self) -> None:
+        """Bind a transport and prepare to intercept its socket."""
+        super().setUp()
+        self.transport = HeosTransport(host="10.0.0.1", pid="1", min_gap=0.0, retries=0)
+
+    def _run(self, chunks: list[bytes]) -> dict[str, Any]:
+        """Run one query against a scripted socket.
+
+        Args:
+            chunks: The bytes the fake peer will return.
+
+        Returns:
+            The response object the transport settled on.
+        """
+        scripted = ScriptedSocket(chunks)
+        original = transport_module.socket.create_connection
+        transport_module.socket.create_connection = (  # type: ignore[assignment]
+            lambda *a, **k: scripted
+        )
+        self.addCleanup(
+            setattr, transport_module.socket, "create_connection", original
+        )
+        return self.transport.query("heos://browse/browse?sid=1028")
+
+    def test_acknowledgement_is_not_mistaken_for_the_answer(self) -> None:
+        # Measured 2026-09-11: browsing a source is acknowledged with an empty
+        # payload and 'command under process', and the listing follows. Taking
+        # the first message would report an empty favourites list.
+        ack = (
+            b'{"heos":{"command":"browse/browse","result":"success",'
+            b'"message":"command under process&sid=1028"},"payload":[]}\r\n'
+        )
+        answer = (
+            b'{"heos":{"command":"browse/browse","result":"success",'
+            b'"message":"sid=1028&returned=1&count=1"},'
+            b'"payload":[{"name":"1.FM Gaia","mid":"s214674"}]}\r\n'
+        )
+        reply = self._run([ack, answer])
+        self.assertEqual(reply["payload"], [{"name": "1.FM Gaia", "mid": "s214674"}])
+
+    def test_a_single_reply_is_still_returned_at_once(self) -> None:
+        answer = (
+            b'{"heos":{"command":"player/get_volume","result":"success",'
+            b'"message":"pid=1&level=7"}}\r\n'
+        )
+        scripted = ScriptedSocket([answer])
+        original = transport_module.socket.create_connection
+        transport_module.socket.create_connection = (  # type: ignore[assignment]
+            lambda *a, **k: scripted
+        )
+        self.addCleanup(
+            setattr, transport_module.socket, "create_connection", original
+        )
+        reply = self.transport.query("heos://player/get_volume?pid=1")
+        self.assertEqual(reply["heos"]["message"], "pid=1&level=7")
+
+    def test_an_acknowledgement_with_no_answer_behind_it_fails(self) -> None:
+        # Better a timeout than an empty listing presented as the truth.
+        ack = (
+            b'{"heos":{"command":"browse/browse","result":"success",'
+            b'"message":"command under process&sid=1028"},"payload":[]}\r\n'
+        )
+        with self.assertRaises(DeviceError):
+            self._run([ack])
 
 
 class ConfigTests(unittest.TestCase):
