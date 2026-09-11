@@ -369,6 +369,56 @@ class PlaybackRouteTests(ServerTestCase):
         self.assertEqual(status, 404)
 
 
+class FavoritesRouteTests(ServerTestCase):
+    """``/api/favorites``: a listing on GET, a start on POST."""
+
+    def setUp(self) -> None:
+        """Collapse the post-start settle delay so the suite stays fast."""
+        super().setUp()
+        original = client_module.FAVORITE_SETTLE_S
+        client_module.FAVORITE_SETTLE_S = 0.0
+        self.addCleanup(setattr, client_module, "FAVORITE_SETTLE_S", original)
+
+    def test_get_favorites(self) -> None:
+        status, body = self.get("/api/favorites")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(
+            [fav["name"] for fav in body["favorites"]],
+            ["1.FM Gaia", "Klassik Radio"],
+        )
+
+    def test_each_entry_carries_what_it_would_take_to_play_it(self) -> None:
+        # The mid is listed even though nothing here can play one yet: it is
+        # what a future play command would address, and hiding it would make
+        # the listing less useful than the device's own.
+        _, body = self.get("/api/favorites")
+        self.assertEqual(body["favorites"][0]["mid"], "s214674")
+        self.assertTrue(body["favorites"][0]["playable"])
+
+    def test_play_favorite(self) -> None:
+        status, body = self.post("/api/favorites", "preset=1")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertIn("state", body)
+        self.assertIn(
+            f"heos://browse/play_preset?pid={self.heos.pid}&preset=1",
+            self.heos.commands,
+        )
+
+    def test_missing_preset_is_400(self) -> None:
+        status, body = self.post("/api/favorites", "")
+        self.assertEqual(status, 400)
+        self.assertIn("preset", body["error"])
+
+    def test_zero_preset_is_400(self) -> None:
+        # HEOS numbers favourites from one; zero is a caller bug, not a
+        # request the receiver should be asked to reject.
+        status, body = self.post("/api/favorites", "preset=0")
+        self.assertEqual(status, 400)
+        self.assertFalse(body["ok"])
+
+
 class KeepAliveFramingTests(ServerTestCase):
     """A request body left unread is read as the next request line.
 

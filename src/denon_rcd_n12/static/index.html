@@ -136,6 +136,19 @@
   }
   select:disabled { color: var(--dim); cursor: default; }
 
+  /* A list, not buttons: these are read from the receiver and nothing here
+     can start one playing yet. */
+  .favorites {
+    margin: 0;
+    padding: 0 0.75rem;
+    list-style: none;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .favorites li { padding: 0.15rem 0; border-bottom: 1px solid var(--rule); }
+  .favorites li:last-child { border-bottom: 0; }
+  .favorites li.empty { color: var(--dim); border-bottom: 0; }
+
   .hint {
     margin: 0;
     padding: 0 0.75rem;
@@ -194,9 +207,21 @@
     <div class="actions">
       <button id="check-playback">check playback</button>
       <button id="check-source">check source</button>
-      <select id="source-pick" aria-label="input source"></select>
+      <select id="source-pick" aria-label="source to select">
+        <!-- Disabled and selected, so the list opens on a prompt rather than
+             on phono: the first input is not a default anyone chose, and a
+             picker that already shows a real answer invites setting it by
+             accident. -->
+        <option value="" selected disabled>&mdash; choose a source &mdash;</option>
+        <!-- Not an input: picking this starts a stored station rather than
+             switching the receiver's input, so it goes to its own route. The
+             inputs are appended after it, from /api/sources. -->
+        <option value="favorite:1">favorite 1</option>
+      </select>
       <p class="hint">switching stops playback and wakes a sleeping unit</p>
-      <button id="set-source">set source</button>
+      <button id="set-source" disabled>set source</button>
+      <button id="list-favorites">list favorites</button>
+      <ul id="favorites" class="favorites"></ul>
     </div>
   </div>
 
@@ -210,6 +235,13 @@
   const slider = $("level");
   const levelOut = $("level-out");
   const picker = $("source-pick");
+
+  // "set source" is meaningless until something is chosen, and run() re-enables
+  // every control when it finishes, so the button's state has to be restored
+  // from the picker rather than left to that blanket enable.
+  function syncPicker() {
+    $("set-source").disabled = !picker.value;
+  }
 
   function say(text, isError) {
     log.textContent = text;
@@ -259,6 +291,23 @@
           picker.value = data.source;
         }
       }
+      if ("favorites" in data) {
+        const list = $("favorites");
+        list.textContent = "";
+        for (const fav of data.favorites) {
+          const li = document.createElement("li");
+          // textContent, never innerHTML: these names come off the receiver
+          // and out of a streaming directory, and are not ours to trust.
+          li.textContent = fav.name || fav.mid || "(unnamed)";
+          list.append(li);
+        }
+        if (!data.favorites.length) {
+          const li = document.createElement("li");
+          li.className = "empty";
+          li.textContent = "none stored on the receiver";
+          list.append(li);
+        }
+      }
       if ("state" in data) {
         show($("state"), data.state, false);
         const parts = [data.title, data.artist];
@@ -283,6 +332,7 @@
       say(err.message, true);
     } finally {
       controls.forEach((c) => (c.disabled = false));
+      syncPicker();
     }
   }
 
@@ -292,16 +342,30 @@
   $("check-volume").onclick = () => run("check volume", "/api/volume");
   $("check-source").onclick = () => run("check source", "/api/source");
   $("check-playback").onclick = () => run("check playback", "/api/playback");
+  $("list-favorites").onclick = () => run("list favorites", "/api/favorites");
   $("set-source").onclick = async () => {
-    await run("set source", "/api/source", {
-      ...form,
-      body: "name=" + encodeURIComponent(picker.value),
-    });
+    // Two different things share one picker: an input is selected over the AVR
+    // protocol, a favourite is started over HEOS. The value says which.
+    const favorite = picker.value.startsWith("favorite:");
+    if (favorite) {
+      await run("play favorite", "/api/favorites", {
+        ...form,
+        body: "preset=" + encodeURIComponent(picker.value.slice("favorite:".length)),
+      });
+      // Starting a favourite can move the input to the network one, and the
+      // reply says nothing about that.
+      show($("source"), $("source").textContent, true);
+    } else {
+      await run("set source", "/api/source", {
+        ...form,
+        body: "name=" + encodeURIComponent(picker.value),
+      });
+    }
     // An input write wakes a sleeping unit — measured 2026-09-08, standby to
-    // on with no echo and no PWON sent. So whatever the power row says is no
-    // longer known to hold. Dim it rather than re-read it: the reply is one
-    // more paced device transaction, and the row can say "this was true a
-    // moment ago" for free.
+    // on with no echo and no PWON sent. Whether starting a favourite does the
+    // same is unmeasured, so the row is dimmed either way: "this was true a
+    // moment ago" beats a value we cannot vouch for, and costs no paced
+    // device transaction the way re-reading would.
     show($("power"), $("power").textContent, true);
   };
   $("toggle-power").onclick = () =>
@@ -320,6 +384,8 @@
   // Dim while the slider holds a level the device has not confirmed; solid
   // again once a reply comes back through run().
   slider.oninput = () => show(levelOut, slider.value, true);
+
+  picker.onchange = syncPicker;
 
   // Fill the picker from the server rather than hardcoding the input names
   // here: the mapping lives in client.py, where it was measured, and a second

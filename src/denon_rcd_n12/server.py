@@ -136,6 +136,8 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
                 self._run(lambda: {"source": client.get_source()})
             elif path == "/api/playback":
                 self._run(client.get_playback)
+            elif path == "/api/favorites":
+                self._run(lambda: {"favorites": client.list_favorites()})
             else:
                 self._json({"ok": False, "error": "not found"}, status=404)
 
@@ -194,6 +196,8 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
                 self._mute(form)
             elif path == "/api/source":
                 self._source(form)
+            elif path == "/api/favorites":
+                self._favorite(form)
             else:
                 self._json({"ok": False, "error": "not found"}, status=404)
 
@@ -249,6 +253,19 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
                     {"ok": False, "error": f"mute state must be on, off or toggle, got {state!r}"},
                     status=400,
                 )
+
+        def _favorite(self, form: dict[str, list[str]]) -> None:
+            """Start a favourite.
+
+            ``GET`` on this path lists them and ``POST`` plays one, so the two
+            halves of the same resource stay on one route.
+
+            Args:
+                form: Decoded form parameters carrying ``preset``, the 1-based
+                    position in the favourites list.
+            """
+            raw = (form.get("preset") or [""])[0]
+            self._run(lambda: client.play_favorite(_whole(raw, "preset")))
 
         def _source(self, form: dict[str, list[str]]) -> None:
             """Apply a source write.
