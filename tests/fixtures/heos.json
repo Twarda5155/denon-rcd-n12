@@ -49,6 +49,38 @@
       "message": "pid={pid}&state={state}"
     }
   },
+  "browse/play_preset": {
+    "heos": {
+      "command": "browse/play_preset",
+      "result": "success",
+      "message": "pid={pid}&preset={preset}"
+    }
+  },
+  "browse/browse": {
+    "heos": {
+      "command": "browse/browse",
+      "result": "success",
+      "message": "sid=1028&returned=2&count=2"
+    },
+    "payload": [
+      {
+        "container": "no",
+        "mid": "s214674",
+        "type": "station",
+        "playable": "yes",
+        "name": "1.FM Gaia",
+        "image_url": ""
+      },
+      {
+        "container": "no",
+        "mid": "s25028",
+        "type": "station",
+        "playable": "yes",
+        "name": "Klassik Radio",
+        "image_url": ""
+      }
+    ]
+  },
   "player/get_now_playing_media": {
     "heos": {
       "command": "player/get_now_playing_media",

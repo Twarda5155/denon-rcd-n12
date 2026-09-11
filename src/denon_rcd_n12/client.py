@@ -79,6 +79,17 @@ SOURCE_SERVER = "server"
 #: the same reason :data:`SOURCE_SERVER` was read-only from the start.
 SELECTABLE_SOURCES = tuple(name for name in SOURCES if name != SOURCE_NET)
 
+#: HEOS source id of the favourites list, from ``browse/get_music_sources``.
+FAVORITES_SID = 1028
+
+#: Seconds to let a favourite start before reading back what is playing.
+#: Measured 2026-09-11: without it the readback names the *previous* station,
+#: because the metadata trails the command. Two seconds was enough for the
+#: station name every time; the track title takes longer still and arrives as
+#: the stream's bitrate first, which no delay short enough to be worth paying
+#: would fix.
+FAVORITE_SETTLE_S = 2.0
+
 #: HEOS source id of the local-media service. A foobar2000 share on the LAN was
 #: measured reporting this generic id rather than one of its own, so comparing
 #: against it is enough to tell a local server from a streaming service.
@@ -415,6 +426,74 @@ class DenonClient:
             "station": media.get("station") or None,
             "media_type": media.get("type") or None,
         }
+
+    def list_favorites(self) -> list[dict[str, Any]]:
+        """List the favourites stored on the receiver, over HEOS.
+
+        One HEOS round trip, though a slow one: browsing a source is answered
+        in two messages, an acknowledgement and then the listing, which
+        :class:`~denon_rcd_n12.transport.HeosTransport` waits out.
+
+        Reading only. Each entry carries the ``mid`` that would start it
+        playing, but nothing here plays anything -- whether a favourite can be
+        started, and whether doing so is what finally selects the network
+        input, is open question 17.
+
+        Returns:
+            One mapping per favourite, with ``name``, ``mid``, ``media_type``
+            and ``playable``. Empty when the receiver holds no favourites.
+
+        Raises:
+            DeviceError: If the HEOS query failed.
+        """
+        reply = self.heos.query(f"heos://browse/browse?sid={FAVORITES_SID}")
+        return [
+            {
+                "name": entry.get("name"),
+                "mid": entry.get("mid"),
+                "media_type": entry.get("type"),
+                "playable": entry.get("playable") == "yes",
+            }
+            for entry in reply.get("payload") or []
+        ]
+
+    def play_favorite(self, position: int) -> dict[str, Any]:
+        """Start one of the receiver's favourites, by its position in the list.
+
+        Measured 2026-09-11: asking for position 2 while position 1 played
+        switched the station within two seconds, and asking for 1 switched it
+        back. The position is HEOS's own 1-based ``preset`` numbering, which is
+        the order :meth:`list_favorites` reports.
+
+        The upper bound is left to the receiver. Checking it here would cost a
+        listing on every call to guard against a number the device rejects
+        perfectly well on its own.
+
+        Note:
+            Whether this also *selects* the network input from another input is
+            not established -- every measurement so far started with the unit
+            already on it. Open question 17.
+
+        Args:
+            position: 1-based position in the favourites list.
+
+        Returns:
+            Playback as :meth:`get_playback` reports it once the change has
+            settled. The station name is reliable; the title often is not yet,
+            naming the stream's bitrate until the unit learns what is on air.
+
+        Raises:
+            ValueError: If ``position`` is not a positive integer.
+            DeviceError: If the receiver rejected the command, which is what an
+                out-of-range position looks like.
+        """
+        if not isinstance(position, int) or position < 1:
+            raise ValueError(f"favourite position must be 1 or more, got {position!r}")
+        self.heos.query(
+            f"heos://browse/play_preset?pid={self.heos.pid}&preset={position}"
+        )
+        time.sleep(FAVORITE_SETTLE_S)
+        return self.get_playback()
 
     def _now_playing(self) -> dict[str, Any]:
         """Read the HEOS metadata for whatever is loaded in the player.

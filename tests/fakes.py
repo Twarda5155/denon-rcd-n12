@@ -122,6 +122,7 @@ class FakeHeosTransport:
         pid: str = "1234567890",
         now_playing_sid: int | None = 1024,
         play_state: str = "play",
+        favorites: list[dict[str, Any]] | None = None,
     ) -> None:
         """Configure the fake HEOS endpoint.
 
@@ -137,6 +138,9 @@ class FakeHeosTransport:
             play_state: Transport state to report, one of ``play``, ``pause``,
                 ``stop`` or ``unknown`` -- the last being what the unit was
                 measured answering while a transition settles.
+            favorites: Payload ``browse/browse`` replays. ``None`` keeps the
+                two recorded favourites; pass ``[]`` for a receiver holding
+                none.
 
         Raises:
             ValueError: If no payload was ever recorded for ``now_playing_sid``.
@@ -146,6 +150,7 @@ class FakeHeosTransport:
         self.mute = mute
         self.fail = fail
         self.play_state = play_state
+        self.favorites = favorites
         self.commands: list[str] = []
         self._fixture = load_fixture("heos.json")
         self._payloads: dict[str, Any] = self._fixture["_now_playing"]
@@ -190,7 +195,10 @@ class FakeHeosTransport:
             mute="on" if self.mute else "off",
             state=self.play_state,
             step=params.get("step", [""])[0],
+            preset=params.get("preset", [""])[0],
         )
+        if name == "browse/browse" and self.favorites is not None:
+            response["payload"] = json.loads(json.dumps(self.favorites))
         if name == "player/get_now_playing_media":
             sid = self.now_playing_sid
             payload = {} if sid is None else self._payloads[str(sid)]

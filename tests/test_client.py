@@ -8,6 +8,7 @@ from fakes import FakeHeosTransport, FakeTelnetTransport
 
 from denon_rcd_n12 import client as client_module
 from denon_rcd_n12.client import (
+    FAVORITES_SID,
     PLAY_STATES,
     SELECTABLE_SOURCES,
     SOURCE_NET,
@@ -514,6 +515,92 @@ class PlaybackTests(unittest.TestCase):
         client, _, _ = build(fail=True)
         with self.assertRaises(DeviceError):
             client.get_playback()
+
+
+class FavoritesTests(unittest.TestCase):
+    """Listing the favourites the receiver holds, and starting one."""
+
+    def setUp(self) -> None:
+        """Collapse the post-start settle delay so the suite stays fast."""
+        original = client_module.FAVORITE_SETTLE_S
+        client_module.FAVORITE_SETTLE_S = 0.0
+        self.addCleanup(setattr, client_module, "FAVORITE_SETTLE_S", original)
+
+    def test_lists_the_recorded_favorites(self) -> None:
+        client, _, _ = build()
+        self.assertEqual(
+            client.list_favorites(),
+            [
+                {
+                    "name": "1.FM Gaia",
+                    "mid": "s214674",
+                    "media_type": "station",
+                    "playable": True,
+                },
+                {
+                    "name": "Klassik Radio",
+                    "mid": "s25028",
+                    "media_type": "station",
+                    "playable": True,
+                },
+            ],
+        )
+
+    def test_browses_the_favorites_source(self) -> None:
+        client, _, heos = build()
+        client.list_favorites()
+        self.assertEqual(
+            heos.commands, [f"heos://browse/browse?sid={FAVORITES_SID}"]
+        )
+
+    def test_a_receiver_with_no_favorites_lists_nothing(self) -> None:
+        telnet = FakeTelnetTransport()
+        heos = FakeHeosTransport(favorites=[])
+        self.assertEqual(DenonClient(telnet, heos).list_favorites(), [])
+
+    def test_never_touches_the_telnet_transport(self) -> None:
+        client, telnet, _ = build()
+        client.list_favorites()
+        self.assertEqual(telnet.commands, [])
+
+    def test_on_unreachable_device_raises(self) -> None:
+        client, _, _ = build(fail=True)
+        with self.assertRaises(DeviceError):
+            client.list_favorites()
+
+    def test_play_favorite_sends_the_position_as_a_preset(self) -> None:
+        client, _, heos = build()
+        client.play_favorite(2)
+        self.assertEqual(
+            heos.commands[0],
+            f"heos://browse/play_preset?pid={heos.pid}&preset=2",
+        )
+
+    def test_play_favorite_reports_what_is_playing_afterwards(self) -> None:
+        client, _, _ = build(play_state="play")
+        self.assertEqual(client.play_favorite(1)["state"], "play")
+
+    def test_play_favorite_rejects_positions_below_one(self) -> None:
+        # HEOS numbers favourites from one, so zero and negatives are caller
+        # bugs worth naming here rather than round trips for the device to
+        # refuse.
+        for position in (0, -1):
+            with self.subTest(position=position):
+                client, _, heos = build()
+                with self.assertRaises(ValueError):
+                    client.play_favorite(position)
+                self.assertEqual(heos.commands, [])
+
+    def test_play_favorite_rejects_a_non_integer_position(self) -> None:
+        client, _, heos = build()
+        with self.assertRaises(ValueError):
+            client.play_favorite("1")  # type: ignore[arg-type]
+        self.assertEqual(heos.commands, [])
+
+    def test_play_favorite_never_touches_the_telnet_transport(self) -> None:
+        client, telnet, _ = build()
+        client.play_favorite(1)
+        self.assertEqual(telnet.commands, [])
 
 
 class ParsingTests(unittest.TestCase):
