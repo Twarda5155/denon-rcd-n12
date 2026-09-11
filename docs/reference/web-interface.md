@@ -2,7 +2,7 @@
 source: HEOS CLI session against the local unit, Denon RCD-N12 web manual, third-party reverse engineering
 date: 2026-08-30
 status: partial
-verified_against: HEOS CLI 1255, live device, 2026-08-30 and 2026-09-07 (in standby); AVR telnet 23, live device, 2026-09-06
+verified_against: HEOS CLI 1255, live device, 2026-08-30, 2026-09-07 (in standby), 2026-09-08 and 2026-09-11; AVR telnet 23, live device, 2026-09-06 to 2026-09-08
 untested: sleep, HTTP goform
 ---
 
@@ -279,6 +279,135 @@ input failed for the reason above. Open question 16 stays open.
 nobody at the receiver and nothing in the log between the two but play-state
 reads. Unexplained; see open question 18.
 
+**A slow HEOS command is answered twice, and the first answer is a lie.**
+Measured 2026-09-11 on `browse/browse?sid=1028`:
+
+```
+<- {"heos":{…,"result":"success","message":"command under process&sid=1028"},"payload":[]}
+<- {"heos":{…,"result":"success","message":"sid=1028&returned=2&count=2"},"payload":[ … ]}
+```
+
+The acknowledgement carries `result: success` and an **empty payload**, so a
+reader that returns the first matching reply reports an empty source rather
+than an error — the failure mode that hides. `transport.py` now reads past any
+message containing `command under process` and waits for the one behind it.
+This is why the 2026-09-06 note about `browse?sid=1027` should be treated with
+suspicion: that reading was taken with the old behaviour.
+
+**Favorites listing works**, `browse/browse?sid=1028`, measured the same day:
+
+| `name` | `mid` | `type` | `playable` | `container` |
+|---|---|---|---|---|
+| 1.FM Gaia | `s214674` | `station` | `yes` | `no` |
+| Klassik Radio | `s25028` | `station` | `yes` | `no` |
+
+The reply also carries `options: [{"browse": [{"id": 20, "name": "Remove from
+HEOS Favorites"}]}]`. The `mid` values are TuneIn station ids — `s25028` is the
+same one that appeared as `album_id` in the Klassik Radio now-playing payload on
+2026-09-07, which ties a favourite to what the unit reports while playing it.
+Whether a `mid` can be *started* is untested; that is open question 17.
+
+**`browse/play_preset` starts a favourite.** Measured 2026-09-11 with the unit
+awake, on the network input, 1.FM Gaia playing at level 10:
+
+```
+-> browse/play_preset?pid=…&preset=2   <- success, message "pid=…&preset=2"
+   +2 s  station='Klassik Radio'  mid='https://stream.klassikradio.de/national/aac-128/tunein'
+-> browse/play_preset?pid=…&preset=1   <- success
+   +2 s  state=unknown, station='1.FM Gaia'
+   +4 s  state=play,    song='Aurora'
+```
+
+`preset` is HEOS's own 1-based numbering over the favourites list, so it lines
+up with the order `browse/browse?sid=1028` returns. Three things follow.
+
+- **The readback trails the command by about a second.** Reading playback
+  straight after the write names the *previous* station — measured through the
+  HTTP API before a settle was added, where asking for preset 2 answered
+  "1.FM Gaia" and asking for 1 answered "Klassik Radio". `FAVORITE_SETTLE_S`
+  is 2.0 s for that reason and was sufficient every time.
+- **The title lags further than the station.** For a second or two `song`
+  carries the stream's bitrate — `128 kbps aac`, `192 kbps mp3` — before the
+  track on air arrives. This retires the earlier puzzle over a stopped TuneIn
+  stream reporting `192 kbps mp3`: that is what this field says when the unit
+  has no track to name, not junk.
+- **`state` passes through `unknown`** on the way, as it does at every other
+  transition.
+
+**And it selects the network input.** Measured 2026-09-11 from a standing
+start on another input:
+
+```
+source=cd, state=stop        -> browse/play_preset?preset=1
++2 s  source=net, state=play, sid=3, station='1.FM Gaia'
+```
+
+**Open question 17 is answered.** The network input is reachable after all —
+not over the AVR protocol, which ignores `SINET`, but by starting something on
+it over HEOS. The input follows the playback rather than the other way round,
+which is the same relationship that makes `SINET` ambiguous between a streaming
+service and a DLNA server: it is a report of what HEOS is doing, not a
+destination.
+
+**`player/set_play_state` works, and `pause` is not a pause.** Measured
+2026-09-11 against a favourite playing on the network input — the first stand
+this test ever had, earlier attempts having had nothing to pause:
+
+```
+state=play, song='Duduk Dreams'
+-> set_play_state=pause   <- success, echoes state=pause
+   +1.5 s through +6 s    state=stop, song='192 kbps mp3'   (stable, four polls)
+-> set_play_state=play    <- success
+   +4 s                   state=play, song='Duduk Dreams'
+```
+
+**Open question 16 is answered**, in two parts that matter separately.
+
+- **The command is not a no-op.** It moved a live stream and moved it back. The
+  three earlier runs that showed "success and nothing happened" were all cases
+  with nothing to act on — standby, an idle CD input, and an AUX passthrough.
+- **`pause` stops rather than pauses, on a stream.** The state settles on `stop`
+  and the title falls back to the bitrate, meaning the unit no longer knows what
+  is on air — the stream is torn down, not held. This is the same collapse seen
+  on AUX on 2026-09-08, now confirmed on media the unit does transport. A UI
+  offering "pause" for a stream would be naming something the device does not
+  do; `play` and `stop` are the two verbs it honours here.
+
+**A disc pauses properly.** Measured 2026-09-11, minutes later, on the same
+unit with a disc loaded:
+
+```
+state=play, song='Track 1', mid='cd/cdda'
+-> set_play_state=pause   +1.5 s through +6 s   state=pause   (stable, four polls)
+                                                song='Track 1' kept
+-> set_play_state=play    +2 s                  state=play
+```
+
+**Open question 19 is answered**, and together with the stream result it gives
+the rule: **the command is always honoured, and the medium decides what pause
+means.** A live stream cannot be held, so the receiver stops it and forgets the
+track; a disc is held in place with its track intact. Neither is the unit
+ignoring the command.
+
+For a UI this means `play` and `stop` are safe words everywhere, while `pause`
+is honest for a disc and misleading for a stream — where pressing it yields
+`stop`.
+
+**`cd/nodisc` means the drive has not read the disc, not that the tray is
+empty.** Both readings of it in the whole device log — 2026-09-08 07:41:07 and
+07:41:07.7 — came one second after `PW?` answered `PWSTANDBY`, with `SI?` on
+`SICD`. Every one of the 37 `cd/cdda` readings came from an awake unit. The disc
+was in the tray throughout: it was found there on 2026-09-11, having been put in
+before any of these measurements.
+
+So on a sleeping unit the CD input reports `mid: "cd/nodisc"` and `song: "CD"`
+because the transport is not spinning, and the same disc reports `cd/cdda` with
+a track name as soon as the unit is awake. A UI must not read `nodisc` as "no
+disc" — it means "ask again when the unit is on".
+
+Closing the tray on a loaded disc **starts playback by itself**, observed
+2026-09-11.
+
 - `browse/get_music_sources` → 10 entries: TuneIn (`sid` 3), Deezer (5), SoundCloud
   (9), Tidal (10), Amazon (13), Local Music (1024, `heos_server`), Playlists (1025),
   History (1026), AUX Input (1027), Favorites (1028).
@@ -350,8 +479,9 @@ All responses are single-line JSON of shape
 | `heos://player/play_previous` | TCP write | `pid` | echo in `message` |
 | `heos://player/get_now_playing_media` | TCP write | `pid` | `payload`: object with `song`, `artist`, `album`, `image_url`, `sid` |
 | `heos://player/get_play_mode` | TCP write | `pid` | `message` with `repeat`, `shuffle` |
-| `heos://browse/browse` | TCP write | `sid` (1027 = AUX/inputs) | `payload`: array of source entries — **assumed** |
+| `heos://browse/browse` | TCP write | `sid` | `payload`: array of entries; answered in two messages, see the confirmed section. Measured for `sid` 1028 (favorites) and 1027 |
 | `heos://browse/play_input` | TCP write | `pid`, `input=inputs/…` | echo — **assumed** |
+| `heos://browse/play_preset` | TCP write | `pid`, `preset=1-…` | echo; **measured**, starts the favourite at that position |
 
 `level` is an absolute 0–100 scale, **not** dB.
 

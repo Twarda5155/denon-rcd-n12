@@ -55,7 +55,10 @@ nothing.
 - Writing `SI` was verified on the hardware 2026-09-07 (CD to Optical and
   back, confirmed at the front panel) and found selective on 2026-09-08: it
   works for physical inputs and not for the network one.
-- The network input is now unreachable from this project. Getting it back means
-  driving HEOS playback rather than the AVR protocol — open question 17 — which
-  is the same mechanism the third consequence above already pointed at for
-  selecting a specific service.
+- The network input is reachable, but not through this command. Measured
+  2026-09-11: starting a favourite with HEOS `browse/play_preset` moves the unit
+  to it from another input within two seconds. So the input follows the
+  playback, which is the same relationship that makes `SINET` ambiguous in the
+  first place — it reports what HEOS is doing rather than naming a destination.
+  `set_source` stays input-only; playing is `play_favorite`, a different verb
+  for a different thing.

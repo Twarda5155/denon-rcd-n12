@@ -1,13 +1,13 @@
-# Status — updated 2026-09-10
+# Status — updated 2026-09-11
 
 ## Next step
 
-**Q17** — find how the network input is selected, since `SI` cannot do it.
-It now blocks two things at once: the `net` entry in the source picker, and Q16,
-because HEOS-transported media is the only place a pause means anything. The
-lead is HEOS playback — `browse/play_stream` on a favourite, or the unverified
-`browse/play_input` — with `SI?` watched afterwards to see whether the input
-follows the playback.
+A transport control on the page: `play`, `pause` and `stop`. Q16 and Q19 both
+closed on 2026-09-11 and between them settle the shape — the command is always
+honoured, and the medium decides what pause means. A disc pauses and keeps its
+track; a stream cannot be held, so the receiver stops it. All three verbs can
+ship, with a hint saying what pause does to a stream, the way the source picker
+already warns what switching does to playback.
 
 ## In flight
 
@@ -42,14 +42,16 @@ Roughly in value order.
   connections on 23, a held HEOS socket on 1255, a shared lock and pacing clock
   so the two never overlap or fire back to back, retry with logging to `logs/`,
   and config read from `config/device.yaml` through a small flat-YAML parser
-  (no dependency).
+  (no dependency). Reads past a HEOS `command under process` acknowledgement to
+  the answer behind it, which is what made the favourites listing possible.
 - `client.py` — power (`get`/`set`/`toggle`), volume (`get`/`set`/`step`),
   mute (`get` via volume, `set`/`toggle`), source (`get`/`set`) over the
   measured `SI` token set, and playback (`get`: transport state plus title,
-  artist, album, station).
+  artist, album, station), plus the favourites listing and starting one by
+  position.
 - `server.py` — loopback HTTP API and static page. `GET`/`POST /api/power`,
   `/api/volume` and `/api/source`; `POST /api/volume/step` and `/api/mute`;
-  `GET /api/sources` and `/api/playback`.
+  `GET /api/sources` and `/api/playback`; `GET`/`POST /api/favorites`.
   Connection desync, chunked bodies and port collisions are covered by tests.
 - `static/index.html` — dependency-free single page, fetches nothing off the
   machine. Two columns of controls under one shared block of readouts, both
@@ -62,14 +64,18 @@ Roughly in value order.
   dimmed after a source write, because an input write wakes a sleeping unit
   (Q14). The input picker is filled from `/api/sources` rather than from a copy
   of the names in the page, and behaves as the volume slider does — the control
-  is a request, the row above is the device's answer.
+  is a request, the row above is the device's answer. The picker opens on a
+  prompt rather than on the first input, and `set source` stays disabled until
+  something is chosen. It holds one entry that is not an input — `favorite 1`,
+  which starts a stored station over HEOS and routes to `/api/favorites`
+  instead. `list favorites` renders the receiver's stored stations beneath it.
 - `cli.py` — `serve`, `power`, `volume`, `mute`, `source`, `playback`.
 - Corrected 2026-09-08: `net` is not a writable input on this unit. `SINET` is
   ignored, so `set_source` refuses both network names, `/api/sources` and the
   page's picker list six inputs rather than seven, and the CLI's choices match.
   Yesterday's selector would have offered an input that silently did nothing.
-- Tests: 131 passed, 29 subtests, all against fakes with the receiver powered
-  off (run 2026-09-10). The HEOS fixture now carries real recorded now-playing
+- Tests: 149 passed, 31 subtests, all against fakes with the receiver powered
+  off (run 2026-09-11). The HEOS fixture now carries real recorded now-playing
   payloads for both a DLNA track and a TuneIn station.
 - `docs/reference/web-interface.md` — protocol facts graded by evidence level;
   all seven input tokens measured, plus the 2026-09-07 standby and playback
@@ -77,7 +83,8 @@ Roughly in value order.
   undocumented fourth transport state, `unknown`, at every transition — it is
   in `PLAY_STATES` and the page treats it as "not playing". 2026-09-08 added
   the three HEOS writes, the `SINET` write refusal, and the observations behind
-  Q15, Q17 and Q18.
+  Q15, Q17 and Q18. 2026-09-11 added the deferred-reply pattern and the
+  favourites listing, and 2026-09-11 also `browse/play_preset`.
 - `docs/decisions/2026-08-30-local-control-server.md` — amended 2026-09-07 with
   a "What exists" table, so it no longer claims nothing is implemented, and it
   now records that holding port 23 open was overruled by the hardware.
@@ -91,10 +98,7 @@ Roughly in value order.
 - **MariaDB persistence.** Decided 2026-09-05: no driver in the env, no code
   talks to it. Revisit only when there is history worth keeping.
 - **Streamlit dashboard.** Dropped in `cc9b624` in favour of the one-page app.
-- **Playback transport control** (play/pause/next from the page). No longer a
-  choice — it is blocked on Q16. The command is accepted by this unit and has
-  never been seen to change anything, so the control cannot ship until real
-  playback proves it works.
+- Nothing in the transport is deferred any more — see "Next step".
 - **HTTP `goform` endpoint** (Q6). Telnet plus HEOS cover every capability the
   page needs; a third protocol earns its place only if one of them fails.
 - **Wake-on-LAN and any network recovery from deep standby.** Ruled out on

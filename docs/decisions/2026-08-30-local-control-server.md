@@ -1,7 +1,7 @@
 # Local control server
 
 Status: accepted; partly implemented. See "What exists" below, kept current as
-of 2026-09-07 — the proposed surface further down is still a proposal and parts
+of 2026-09-11 — the proposed surface further down is still a proposal and parts
 of it may never be built.
 
 ## Context
@@ -52,6 +52,7 @@ paces instead. That is the one part of this record the implementation overruled.
 | `/api/source` | GET, POST `name=<input>` | `{ok, source}` |
 | `/api/sources` | GET | `{ok, sources: [...]}` |
 | `/api/playback` | GET | `{ok, state, title, artist, album, station, media_type}` |
+| `/api/favorites` | GET; POST `preset=1-…` | GET `{ok, favorites: [{name, mid, media_type, playable}]}`; POST `{ok, state, title, …}` |
 
 `/api/sources` is the one route that reaches no further than this process: the
 input names are a constant, so the page fills its selector on load without
@@ -64,6 +65,17 @@ step.
 one field they changed, because mute and level are read together anyway and a
 caller that has just muted still wants the level on screen.
 
+`/api/favorites` carries both halves of one resource: `GET` lists them, `POST`
+starts one by its position. It answers with playback rather than with the
+favourite it was given, because what the receiver actually began playing is the
+question a caller has next — and for a second after the command the answer is
+still the outgoing station, which is why the client waits before reading.
+
+It is also the only way this API reaches the network input. `SINET` is ignored
+as a write, but starting a favourite moves the unit there (measured
+2026-09-11), so `POST /api/favorites` does what a `net` entry in `/api/sources`
+could not.
+
 Playback is a read. `player/set_play_state` was exercised on this unit on
 2026-09-08 and *accepted* without changing anything — there was nothing playing
 to change — so whether it works is still unknown (open question 16), and this
@@ -71,7 +83,7 @@ project does not ship controls that might do nothing.
 
 ## API surface
 
-The rest of this table is a proposal from 2026-08-30. The four rows above are
+The rest of this table is a proposal from 2026-08-30. The eight rows above are
 what actually answers.
 
 | Path | Method | Params | Response shape |

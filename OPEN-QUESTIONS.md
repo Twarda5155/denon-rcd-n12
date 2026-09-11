@@ -103,19 +103,6 @@ entries stay below only as one-line pointers.
 - **Status:** open. Bounded so far at 5.5 minutes or less, from a single
   unpolled gap on 2026-09-08.
 
-## Q17 — How is the network input selected, if not with `SI`?
-
-- **Why it matters:** it is the only input the page cannot offer. `SINET` is
-  ignored (measured 2026-09-08), so TuneIn and the DLNA server are reachable
-  from the remote and the HEOS app but not from this project. It also blocks
-  Q16, because HEOS-transported media is the only place a pause has a defined
-  meaning.
-- **How to settle:** try HEOS playback as the selector rather than the AVR
-  protocol — `browse/play_stream` on a favourite, or `browse/play_input`, whose
-  syntax is documented but unverified here. Watch `SI?` afterwards to see
-  whether the input follows the playback.
-- **Status:** open. Blocks Q16 and the network entry in the source picker.
-
 ## Q18 — What moved the reported volume level with nothing sent?
 
 - **Why it matters:** if the level can change on its own, the page's volume
@@ -127,23 +114,6 @@ entries stay below only as one-line pointers.
   moves. Repeat on AUX, where it was seen, and on a network input.
 - **Status:** open. One observation: 30 to 40 in 72 seconds on 2026-09-08, and
   0/muted to 25/unmuted across a later run whose power state was not read.
-
-## Q16 — Does `player/set_play_state` actually control playback?
-
-- **Why it matters:** it is the last capability standing between the page and a
-  play/pause control. The command is *accepted* — `result: success`, the state
-  echoed back — in standby and awake alike, while the readback stays `stop`.
-  That is consistent with two very different worlds: it works and there was
-  simply nothing to pause, or it is a no-op on this model.
-- **How to settle:** start playback at the unit (a disc, or a station), confirm
-  `get_play_state` reads `play`, then send `set_play_state?state=pause` and read
-  it again. It needs media the unit itself transports.
-- **Status:** open, blocks the transport control on the page. Partly advanced
-  2026-09-08: on the AUX *passthrough* input, playing, `pause` did move the
-  state — to `stop`, not `pause` — so the command is not a no-op. That is not
-  the answer, because AUX is not media HEOS transports and nobody was at the
-  unit to say whether the sound stopped. Reaching real HEOS media is blocked on
-  Q17.
 
 ---
 
@@ -161,6 +131,22 @@ entries stay below only as one-line pointers.
   greyed out for standby. Facts in `docs/reference/web-interface.md`. The
   measurement raised Q12 instead, about the metadata being stale rather than
   absent.
+- **Q19 — does `set_play_state=pause` pause a CD, or stop it too?** Closed
+  2026-09-11: a disc pauses properly — `state=pause` held across four polls with
+  the track kept — and resumes. With Q16 that gives the rule: the command is
+  always honoured and the medium decides what pause means. `pause` is honest for
+  a disc, misleading for a stream.
+- **Q16 — does `player/set_play_state` actually control playback?** Closed
+  2026-09-11: it does. On a favourite playing over the network input it moved
+  the stream and moved it back, so the earlier "success and nothing happened"
+  results were all cases with nothing to act on. But `pause` collapses to
+  `stop` on a stream, so only `play` and `stop` are verbs this unit honours
+  there. The disc case became Q19.
+- **Q17 — how is the network input selected, if not with `SI`?** Closed
+  2026-09-11: by starting something on it over HEOS. `browse/play_preset` from
+  a standing start on CD moved the input to `net` within two seconds and played
+  the favourite. The input follows the playback; `SI` never selects it. Facts in
+  `docs/reference/web-interface.md`.
 - **Q9 — does writing `SI<TOKEN>` actually switch the input?** Closed
   2026-09-07: it does. `SIOPTICAL1` sent with a CD playing moved the unit to
   Optical — confirmed at the front panel and by the disc going silent, not by
