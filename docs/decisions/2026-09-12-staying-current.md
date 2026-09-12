@@ -47,11 +47,11 @@ desk as the receiver.
 - **Staleness is visible rather than prevented.** The page already dims a value
   it cannot vouch for: the track when the transport is not playing, the power
   row after an input write. That pattern is now the strategy, not a detail.
-- **`/api/status` costs about seven device transactions**, since power and
-  source come from the AVR side and volume, mute and playback each cost a HEOS
-  query or two. At the 0.5 s floor that is several seconds. It is one wait
-  instead of four, but it is not instant, and the page must say so rather than
-  appear hung.
+- **`/api/status` takes 3.7-3.9 s**, measured over the HTTP API once it was
+  built, with eight paced transactions behind it — power, input and the sleep
+  timer from the AVR side, volume, mute and playback from HEOS. It is one wait
+  instead of four, but it is not instant, and the page says what it is doing
+  rather than appearing hung.
 - **Front-panel changes are invisible until asked about.** Someone pressing a
   button on the receiver changes state the page will not notice. This is
   accepted; the alternative was polling in a loop, which is the one behaviour

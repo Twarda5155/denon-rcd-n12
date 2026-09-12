@@ -2,35 +2,24 @@
 
 ## Next step
 
-A single `/api/status` read, replacing the four the page makes to draw itself.
-The 2026-09-12 decision record settled that the page pulls rather than
-subscribes, which makes this the shape the API is heading for rather than a
-nicety. It costs about seven paced device transactions in a row, so it needs
-timing rather than assuming — and the page has to say it is working rather than
-appear hung.
+Housekeeping, which is all that is left on the list. `check_power_on_off.py`,
+`check_volume.py` and `get_power_on.py` still sit in the repository root,
+superseded by `client.py` since the first week; `_scratch.txt` likewise. Move
+anything still useful into `tools/`, delete the rest, and add `~$*` to
+`.gitignore` so Word lock files stop showing up in `git status`.
 
-Behind it, a transport control: `play`, `pause` and `stop`. Q16 and Q19 settled
-that the command is always honoured and the medium decides what pause means — a
-disc pauses and keeps its track, a stream cannot be held and is stopped instead
-— so all three verbs can ship with a hint explaining the difference.
+After that the project does what it was for, and further work is a matter of
+wanting something rather than owing it.
 
 ## In flight
 
-Nothing. Working tree clean, `main` even with `origin/main`. The 2026-09-12
-sweep closed ten questions and emptied the register.
+Nothing. Working tree clean, `main` even with `origin/main`.
 
 ## To do
 
 Roughly in value order.
 
-- `/api/status` and the transport control, above.
-- A sleep-timer control. Unblocked 2026-09-12: `SLP` works, three digits,
-  001-090, `SLPOFF` to cancel. The receiver holds the state, so nothing has to
-  survive a server restart.
-- Housekeeping: `check_power_on_off.py`, `check_volume.py` and `get_power_on.py`
-  in the repository root are superseded by `client.py` — move anything still
-  useful into `tools/` and delete the rest, likewise `_scratch.txt`. Add `~$*`
-  to `.gitignore` (Word lock files).
+- The housekeeping above.
 
 ## Done (recent)
 
@@ -42,13 +31,16 @@ Roughly in value order.
   answer behind it, which is what made the favourites listing possible.
 - `client.py` — power (`get`/`set`/`toggle`), volume (`get`/`set`/`step`),
   mute (`get` via volume, `set`/`toggle`), source (`get`/`set`) over the
-  measured `SI` token set, playback (`get`: transport state plus title, artist,
-  album, station), and the favourites — listing them and starting one by
-  position.
+  measured `SI` token set, playback (`get`/`set`: the transport plus title,
+  artist, album, station), the sleep timer (`get`/`set`, 1-90 minutes), the
+  favourites — listing them and starting one by position — and `get_status`,
+  which is all of the above in one call.
 - `server.py` — loopback HTTP API and static page. `GET`/`POST /api/power`,
-  `/api/volume` and `/api/source`; `POST /api/volume/step` and `/api/mute`;
-  `GET /api/sources` and `/api/playback`; `GET`/`POST /api/favorites`.
-  Connection desync, chunked bodies and port collisions are covered by tests.
+  `/api/volume`, `/api/source`, `/api/playback`, `/api/sleep` and
+  `/api/favorites`; `POST /api/volume/step` and `/api/mute`; `GET /api/sources`
+  and `/api/status`, the last reading everything in one go, measured at 3.7-3.9 s
+  over eight paced transactions. Connection desync, chunked bodies and port
+  collisions are covered by tests.
 - `static/index.html` — dependency-free single page, fetches nothing off the
   machine. Two columns of controls under one shared block of readouts, both
   columns starting at the top of the grid so the first button of each lines up;
@@ -65,8 +57,13 @@ Roughly in value order.
   something is chosen. It holds one entry that is not an input — `favorite 1`,
   which starts a stored station over HEOS and routes to `/api/favorites`
   instead. `list favorites` renders the receiver's stored stations beneath it.
-- `cli.py` — `serve`, `power`, `volume`, `mute`, `source`, `playback`.
-- Tests: 149 passed, 31 subtests, all against fakes with the receiver powered
+  A `check everything` button spans both columns and fills every row from
+  `/api/status`; `play`, `pause` and `stop` sit under the playback read with a
+  hint saying what pause does to a stream; the sleep timer is a picker with its
+  own hint, because the receiver refuses it while asleep.
+- `cli.py` — `serve`, `status`, `power`, `volume`, `mute`, `source`,
+  `playback`, `sleep`.
+- Tests: 179 passed, 50 subtests, all against fakes with the receiver powered
   off (run 2026-09-12).
 - `tools/probe_device.py`, `tools/probe_ports.py`, and `tools/probe_identity.py`
   — the last prints a ready-to-paste `config/device.yaml` for a receiver at a
@@ -98,6 +95,9 @@ each one was believed for days.
 - **The volume level does not drift on its own** (2026-09-12). One sighting on
   2026-09-08 could not be reproduced in two designed attempts, and the command
   that looked like its cause was cleared by direct test.
+- **`SLP` is refused in standby** (2026-09-12), silently, like every other
+  refusal on this unit. Found by building the control and watching it report
+  success while changing nothing.
 
 ## Deliberately deferred
 

@@ -608,6 +608,26 @@ movement was 2 to 0 at the moment of falling asleep, which is the standby
 artefact recorded above. The mute flag read `on` in that standby sample and
 `off` in others, so it is no more meaningful there than the level is.
 
+**`SLP` is refused while the unit sleeps.** Measured 2026-09-12, found by
+building the control rather than by looking for it:
+
+```
+power=standby   -> SLP015   <- []          SLP? -> SLPOFF
+power=on        -> SLP015   <- SLP015      SLP? -> SLP015
+```
+
+The refusal is the same silence as an out-of-range value and as `SINET`: no
+echo, the old setting kept. It makes sense for the feature — a sleep timer on a
+sleeping unit has nothing to do — but it means a client cannot treat "the
+command was sent" as "the timer is armed". `set_sleep` therefore compares the
+readback against what was asked for and raises on a mismatch, naming standby as
+the cause. Reporting the timer the receiver kept would be a control that
+appears to work, which is the failure this project keeps finding.
+
+**One `/api/status` read takes 3.7-3.9 s**, measured over the HTTP API on
+2026-09-12 with eight paced transactions behind it. That is the price the
+2026-09-12 decision record accepted for drawing the whole page in one gesture.
+
 - `browse/get_music_sources` → 10 entries: TuneIn (`sid` 3), Deezer (5), SoundCloud
   (9), Tidal (10), Amazon (13), Local Music (1024, `heos_server`), Playlists (1025),
   History (1026), AUX Input (1027), Favorites (1028).

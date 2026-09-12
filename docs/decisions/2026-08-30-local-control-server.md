@@ -55,7 +55,9 @@ paces instead. That is the one part of this record the implementation overruled.
 | `/api/mute` | POST `state=on\|off\|toggle` | `{ok, volume, mute}` |
 | `/api/source` | GET, POST `name=<input>` | `{ok, source}` |
 | `/api/sources` | GET | `{ok, sources: [...]}` |
-| `/api/playback` | GET | `{ok, state, title, artist, album, station, media_type}` |
+| `/api/playback` | GET; POST `state=play\|pause\|stop` | `{ok, state, title, artist, album, station, media_type}` |
+| `/api/sleep` | GET; POST `minutes=0-90` | `{ok, sleep}` |
+| `/api/status` | GET | every field above, in one read |
 | `/api/favorites` | GET; POST `preset=1-…` | GET `{ok, favorites: [{name, mid, media_type, playable}]}`; POST `{ok, state, title, …}` |
 
 `/api/sources` is the one route that reaches no further than this process: the
@@ -80,16 +82,21 @@ as a write, but starting a favourite moves the unit there (measured
 2026-09-11), so `POST /api/favorites` does what a `net` entry in `/api/sources`
 could not.
 
-Playback is still a read, but no longer for want of knowing: `set_play_state`
-was settled on 2026-09-11. It controls playback, and the medium decides what
-pause means — a disc pauses and keeps its track, a stream cannot be held and is
-stopped instead. A transport control can therefore ship whenever it is wanted,
-with `pause` explained rather than hidden.
+`POST /api/playback` drives the transport, with `pause` explained on the page
+rather than hidden: a disc pauses and keeps its track, a stream cannot be held
+and is stopped instead. Both are the receiver honouring the command.
+
+`/api/sleep` refuses in standby, because the receiver does, silently. The client
+compares its readback and raises rather than reporting the timer that was kept.
+
+`/api/status` reads the lot in 3.7-3.9 s, measured. It is the slowest route by
+design and the fastest way to draw the whole page.
 
 ## API surface
 
-The rest of this table is a proposal from 2026-08-30. The eight rows above are
-what actually answers.
+The rest of this table is a proposal from 2026-08-30. The ten rows above are
+what actually answers. `/api/transport` and `/api/sleep` arrived under different
+names and shapes; `/api/events` will not arrive at all, decided 2026-09-12.
 
 | Path | Method | Params | Response shape |
 |---|---|---|---|
