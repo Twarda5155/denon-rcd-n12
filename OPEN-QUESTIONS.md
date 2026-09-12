@@ -10,110 +10,14 @@ entries stay below only as one-line pointers.
 
 ---
 
-## Q1 — Which ports are open, powered on *and* in standby?
+## Nothing is open
 
-- **Why it matters:** the standby answer decides which control paths the page
-  can rely on while the unit sleeps, and therefore whether "wake" is a normal
-  action or a special case in the UI.
-- **How to settle:** scan 23, 80, 8080, 1255, 10443 twice — once powered on,
-  once in standby. `tools/probe_device.py` covers the powered-on half.
-- **Status:** open. Not blocking; power control works from the AVR side today.
+As of 2026-09-12 this register is empty. Every question raised since 2026-08-30
+has been answered by measurement, settled as a decision, or — once — closed as
+not reproducible.
 
-## Q3 — Is `SLP` accepted, and in which digit format?
-
-- **Why it matters:** it is the difference between a real sleep timer and a
-  server-side fallback timer whose state dies with the process — a consequence
-  already written into the 2026-08-30 decision record.
-- **How to settle:** send `SLP?`, then `SLP060`, then `SLPOFF` on port 23 and
-  read the echoes. Syntax is carried over from the sibling DRA-N4 and unverified
-  here.
-- **Status:** open, blocks the sleep timer.
-
-## Q5 — Does the `PW` heartbeat appear on a passive port-23 connection?
-
-- **Why it matters:** if it does, the page could learn about power changes made
-  at the front panel without polling. If not, every status read costs a paced
-  transaction.
-- **How to settle:** hold a port-23 socket open for a minute, log every frame.
-  Note that holding the socket blocks all other consumers, so this is a
-  deliberate one-off measurement, not a design the server can adopt casually.
-- **Status:** open.
-
-## Q6 — Does the HTTP `goform` endpoint exist on this firmware, and on which port?
-
-- **Why it matters:** only as a fallback if telnet or HEOS turn out unreliable.
-  Some 2023-era Denons redirect to `https://<ip>:10443` and refuse plain HTTP.
-- **How to settle:** `GET /goform/formMainZone_MainZoneXmlStatusLite.xml` on 80,
-  then 8080.
-- **Status:** open, deliberately deferred — see STATUS.md.
-
-## Q8 — What is the mapping between HEOS `level` (0–100) and AVR `MV` (two digits)?
-
-- **Why it matters:** without it a single slider cannot drive both protocols
-  coherently. The 2026-08-30 decision record already forbids silently converting
-  one into the other, so today the page is honest but partial.
-- **How to settle:** set volume over HEOS at 10, 25, 50, 75 and read `MV?` after
-  each, with the unit powered on and unmuted. Watch for a Volume Limit clamp set
-  in the device menu.
-- **Status:** open. Not blocking while the UI exposes only the HEOS scale.
-
-## Q10 — What is the *minimum* settle time after `PWON`?
-
-- **Why it matters:** `WAKE_SETTLE_S = 4.0` is known sufficient, not known
-  necessary. It is charged to every wake the page performs.
-- **How to settle:** after `PWON`, poll `PW?` at 0.5 s intervals and record the
-  first success; repeat a few times from cold standby.
-- **Status:** open, low value — 4 s is tolerable.
-
-## Q11 — How does the page stay current: paced polling, or pushed events?
-
-- **Why it matters:** this is a design choice, not a measurement, and it decides
-  whether `/api/events` (SSE, in the 2026-08-30 record) is ever built. HEOS
-  `register_for_change_events` pushes on a held socket, which the transport
-  already maintains; the AVR side has no equivalent unless Q5 says otherwise.
-- **How to settle:** decide once the source control lands and the page's real
-  read pattern is visible. Outcome belongs in `docs/decisions/`.
-- **Status:** open.
-
-## Q13 — Can the metadata lag make `get_source()` report `server` for a stream?
-
-- **Why it matters:** `get_source()` calls `SINET` a DLNA server when
-  `get_now_playing_media` reports `sid` 1024. The 2026-09-07 sweep showed the
-  metadata trailing an input change by about one poll — `SIANALOG1` was read
-  while the payload still held the CD's `sid` 1024 — and the CD transport uses
-  that same 1024. So a read taken a second after switching from CD to a
-  streaming service could satisfy both halves of the test and name the input
-  `server` when TuneIn is on it. Never observed; derived from two measurements
-  that were each observed.
-- **How to settle:** switch from CD straight to TuneIn and read `get_source()`
-  immediately, repeatedly. If it misreports, the fix is either a settle delay in
-  `get_source()` or a second read for confirmation — a choice for
-  `docs/decisions/`, since both cost a device transaction.
-- **Status:** open. Affects one label on one input; nothing else depends on it.
-
-## Q15 — How long is the idle timeout before the unit puts itself in standby?
-
-- **Why it matters:** every readout the page shows can go stale without anyone
-  touching anything. It bounds how long a "check power" answer stays true, and
-  it is the strongest argument for a single `/api/status` read over four
-  separate ones taken minutes apart.
-- **How to settle:** wake the unit, leave it alone on an input with nothing
-  playing, and poll `PW?` at a one-minute cadence until it reports standby.
-  Repeat with something playing to see whether playback holds it awake.
-- **Status:** open. Bounded so far at 5.5 minutes or less, from a single
-  unpolled gap on 2026-09-08.
-
-## Q18 — What moved the reported volume level with nothing sent?
-
-- **Why it matters:** if the level can change on its own, the page's volume
-  readout decays like the power one, and a step control could be fighting
-  something invisible. It may also be benign — a ramp after an input change, or
-  simply another person with the remote.
-- **How to settle:** poll `player/get_volume` once a minute for a quarter of an
-  hour with nobody near the receiver, on a stable input, and see whether it
-  moves. Repeat on AUX, where it was seen, and on a network input.
-- **Status:** open. One observation: 30 to 40 in 72 seconds on 2026-09-08, and
-  0/muted to 25/unmuted across a later run whose power state was not read.
+That is a statement about the questions asked, not about the device being
+understood. New ones belong here the moment they are noticed.
 
 ---
 
@@ -131,6 +35,64 @@ entries stay below only as one-line pointers.
   greyed out for standby. Facts in `docs/reference/web-interface.md`. The
   measurement raised Q12 instead, about the metadata being stale rather than
   absent.
+- **Q18 — what moved the reported volume level with nothing sent?** Closed
+  2026-09-12 as **an incident that could not be reproduced**, which is not the
+  same as answered. The sighting was real: `level=30` at 11:18:36 on 2026-09-08
+  and `level=40` at 11:19:48, with no volume command anywhere in the device log
+  between them. Three things were then established and none of them explains it.
+  A five-minute watch on the network input with playback stopped saw no drift.
+  A 4.8-minute watch on AUX, reproducing the original conditions with the
+  operator confirming they touched neither remote nor app, saw no drift. And
+  `set_play_state`, the only command that *did* fall between the two readings,
+  was tested directly over three pause/play cycles and moved the level not at
+  all — so that correlation was a coincidence, and writing it up as a cause
+  would have been a believable falsehood.
+  What is certain is only that this project did not send it; the log is complete
+  on that point. The most economical remaining explanation is another controller
+  acting in that minute, which cannot be confirmed from here. Reopen it if the
+  level is ever seen moving again — the instruments are in the scratchpad
+  history and the conditions are written down.
+- **Q15 — how long is the idle timeout before the unit sleeps?** Closed
+  2026-09-12: between 4.2 and 5.3 minutes with nothing playing. Polling once a
+  minute does not hold it awake, so reads neither prevent sleep nor risk
+  causing it. Facts in `docs/reference/web-interface.md`.
+- **Q11 — how does the page stay current: paced polling, or pushed events?**
+  Closed 2026-09-12 as a decision, not a measurement: it pulls, user-driven, and
+  `/api/events` will not be built. Q5 supplied the deciding fact — the AVR side
+  pushes nothing, and HEOS events need a held socket this transport does not
+  keep. Reasoning in `docs/decisions/2026-09-12-staying-current.md`.
+- **Q13 — can the metadata lag make `get_source()` report `server` for a
+  stream?** Closed 2026-09-12: not on any path this project can drive. Three
+  forced CD-to-stream transitions never produced it, and Q17 says why — the
+  network input is reached only through HEOS playback, so the metadata moves
+  first and `SI` follows. The lag is real but points the safe way here.
+- **Q8 — what is the mapping between HEOS `level` and AVR `MV`?** Closed
+  2026-09-12: they are the same number, measured at ten points from 0 to 75.
+  No conversion needed; the 2026-08-30 warning against mixing the scales is
+  retired, by measurement rather than by resemblance.
+- **Q10 — what is the *minimum* settle time after `PWON`?** Closed 2026-09-12:
+  under 0.5 s. Three cold starts all confirmed `PWON` at the first poll, which
+  is the transport's own pacing floor. `WAKE_SETTLE_S` dropped from 4.0 to 1.0,
+  double the measured bound, since answering `PW?` is not proof that every
+  capability is ready.
+- **Q5 — does the `PW` heartbeat appear on a passive port-23 connection?**
+  Closed 2026-09-12: no. Seventy-five seconds of an idle held socket produced
+  zero frames, refuting the third party claim of a report every 10 s. Power
+  changes made at the unit can only be learned by polling; any push must come
+  from HEOS.
+- **Q3 — is `SLP` accepted, and in which digit format?** Closed 2026-09-12:
+  three zero-padded digits, range 001-090, `SLPOFF` to cancel, `SLP?` to read.
+  Two digits are ignored and anything above 090 is refused silently. The sleep
+  timer needs no server-side fallback, and the 2026-08-30 record's consequence
+  about a timer dying with the process no longer applies.
+- **Q1 — which ports are open, powered on *and* in standby?** Closed
+  2026-09-12: 23, 80, 443 and 1255 answer in both states; 8080 and 10443 refuse
+  in both. Nothing this project relies on disappears while the unit sleeps.
+  `tools/probe_ports.py` runs the scan.
+- **Q6 — does the HTTP `goform` endpoint exist, and on which port?** Closed
+  2026-09-12: the web server exists, redirects HTTP to 443 rather than to
+  10443, and answers 403 Forbidden to every path including the root. Not usable
+  as a fallback. Facts in `docs/reference/web-interface.md`.
 - **Q19 — does `set_play_state=pause` pause a CD, or stop it too?** Closed
   2026-09-11: a disc pauses properly — `state=pause` held across four polls with
   the track kept — and resumes. With Q16 that gives the rule: the command is

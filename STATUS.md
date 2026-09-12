@@ -1,36 +1,32 @@
-# Status — updated 2026-09-11
+# Status — updated 2026-09-12
 
 ## Next step
 
-A transport control on the page: `play`, `pause` and `stop`. Q16 and Q19 both
-closed on 2026-09-11 and between them settle the shape — the command is always
-honoured, and the medium decides what pause means. A disc pauses and keeps its
-track; a stream cannot be held, so the receiver stops it. All three verbs can
-ship, with a hint saying what pause does to a stream, the way the source picker
-already warns what switching does to playback.
+A single `/api/status` read, replacing the four the page makes to draw itself.
+The 2026-09-12 decision record settled that the page pulls rather than
+subscribes, which makes this the shape the API is heading for rather than a
+nicety. It costs about seven paced device transactions in a row, so it needs
+timing rather than assuming — and the page has to say it is working rather than
+appear hung.
+
+Behind it, a transport control: `play`, `pause` and `stop`. Q16 and Q19 settled
+that the command is always honoured and the medium decides what pause means — a
+disc pauses and keeps its track, a stream cannot be held and is stopped instead
+— so all three verbs can ship with a hint explaining the difference.
 
 ## In flight
 
-Nothing. Working tree clean, `main` even with `origin/main`.
+Nothing. Working tree clean, `main` even with `origin/main`. The 2026-09-12
+sweep closed ten questions and emptied the register.
 
 ## To do
 
 Roughly in value order.
 
-- Q17 above, then Q16 and the transport control it unlocks.
-- Q18 — the volume level that moved with nothing sent. If a readout can drift
-  on its own, a step control may be fighting something invisible.
-- Q15 — the idle timeout before the unit sleeps by itself. It bounds how long
-  any readout on the page stays true.
-- Q13 — whether the one-poll metadata lag can make `get_source()` call a stream
-  `server`. Cheap to test while the unit is on and someone is switching inputs
-  anyway.
-- A single `/api/status` read (power + volume + source + playback). The page now
-  needs four round trips to draw itself, and each one costs a paced device
-  transaction. This has grown from a nicety into the obvious next shape of the
-  API — but note it would cost about seven device transactions in a row, so it
-  needs measuring rather than assuming it is faster.
-- Sleep timer — blocked on Q3 (syntax unverified on this model).
+- `/api/status` and the transport control, above.
+- A sleep-timer control. Unblocked 2026-09-12: `SLP` works, three digits,
+  001-090, `SLPOFF` to cancel. The receiver holds the state, so nothing has to
+  survive a server restart.
 - Housekeeping: `check_power_on_off.py`, `check_volume.py` and `get_power_on.py`
   in the repository root are superseded by `client.py` — move anything still
   useful into `tools/` and delete the rest, likewise `_scratch.txt`. Add `~$*`
@@ -38,16 +34,16 @@ Roughly in value order.
 
 ## Done (recent)
 
-- `transport.py` — the only place that opens a socket. Short-lived AVR telnet
-  connections on 23, a held HEOS socket on 1255, a shared lock and pacing clock
-  so the two never overlap or fire back to back, retry with logging to `logs/`,
-  and config read from `config/device.yaml` through a small flat-YAML parser
-  (no dependency). Reads past a HEOS `command under process` acknowledgement to
-  the answer behind it, which is what made the favourites listing possible.
+- `transport.py` — the only place that opens a socket. Short-lived connections
+  on both ports, 23 and 1255 alike, with a shared lock and pacing clock so the
+  two never overlap or fire back to back, retry with logging to `logs/`, and
+  config read from `config/device.yaml` through a small flat-YAML parser (no
+  dependency). Reads past a HEOS `command under process` acknowledgement to the
+  answer behind it, which is what made the favourites listing possible.
 - `client.py` — power (`get`/`set`/`toggle`), volume (`get`/`set`/`step`),
   mute (`get` via volume, `set`/`toggle`), source (`get`/`set`) over the
-  measured `SI` token set, and playback (`get`: transport state plus title,
-  artist, album, station), plus the favourites listing and starting one by
+  measured `SI` token set, playback (`get`: transport state plus title, artist,
+  album, station), and the favourites — listing them and starting one by
   position.
 - `server.py` — loopback HTTP API and static page. `GET`/`POST /api/power`,
   `/api/volume` and `/api/source`; `POST /api/volume/step` and `/api/mute`;
@@ -70,37 +66,44 @@ Roughly in value order.
   which starts a stored station over HEOS and routes to `/api/favorites`
   instead. `list favorites` renders the receiver's stored stations beneath it.
 - `cli.py` — `serve`, `power`, `volume`, `mute`, `source`, `playback`.
-- Corrected 2026-09-08: `net` is not a writable input on this unit. `SINET` is
-  ignored, so `set_source` refuses both network names, `/api/sources` and the
-  page's picker list six inputs rather than seven, and the CLI's choices match.
-  Yesterday's selector would have offered an input that silently did nothing.
 - Tests: 149 passed, 31 subtests, all against fakes with the receiver powered
-  off (run 2026-09-11). The HEOS fixture now carries real recorded now-playing
-  payloads for both a DLNA track and a TuneIn station.
-- `docs/reference/web-interface.md` — protocol facts graded by evidence level;
-  all seven input tokens measured, plus the 2026-09-07 standby and playback
-  measurements that closed Q7 and Q12. The playback sweep turned up an
-  undocumented fourth transport state, `unknown`, at every transition — it is
-  in `PLAY_STATES` and the page treats it as "not playing". 2026-09-08 added
-  the three HEOS writes, the `SINET` write refusal, and the observations behind
-  Q15, Q17 and Q18. 2026-09-11 added the deferred-reply pattern and the
-  favourites listing, and 2026-09-11 also `browse/play_preset`.
-- `docs/decisions/2026-08-30-local-control-server.md` — amended 2026-09-07 with
-  a "What exists" table, so it no longer claims nothing is implemented, and it
-  now records that holding port 23 open was overruled by the hardware.
-- `notebooks/03-odtwarzanie.ipynb` — prototype for the playback reads, run
-  through on the device 2026-09-07; its closing section carries the results that
-  closed Q12 and corrected `PLAY_STATES`.
-- `tools/probe_device.py`.
+  off (run 2026-09-12).
+- `tools/probe_device.py` and `tools/probe_ports.py`.
+
+## Corrections worth remembering
+
+Things this repository asserted and that measurement overturned. Kept because
+each one was believed for days.
+
+- **`net` is not a writable input** (2026-09-08). `SINET` is ignored; the
+  network input is reached only by starting HEOS playback.
+- **`cd/nodisc` means the drive has not read the disc, not that the tray is
+  empty** (2026-09-11). Read off a sleeping unit it says `nodisc` with a disc
+  sitting in it. This repo said "no disc" twice and was wrong both times.
+- **There is no `PW` heartbeat** (2026-09-12). Three code comments and the
+  reference described one, carried from third party notes; 75 s of an idle
+  socket produced nothing.
+- **The HEOS socket was never held open** (2026-09-12). This file claimed it
+  was; `transport.py` has always connected per command on both ports.
+- **`WAKE_SETTLE_S` was 4.0 s for a unit that answers in under 0.5** — now 1.0.
+- **HEOS `level` and AVR `MV` are the same number** (2026-09-12), so the
+  standing warning against ever converting between them was moot.
+- **The unit sleeps after about five minutes idle** (2026-09-12), whatever the
+  input, and neither polling nor the `play` that AUX reports holds it awake — so
+  any readout older than that is probably wrong about power.
+- **The volume level does not drift on its own** (2026-09-12). One sighting on
+  2026-09-08 could not be reproduced in two designed attempts, and the command
+  that looked like its cause was cleared by direct test.
 
 ## Deliberately deferred
 
 - **MariaDB persistence.** Decided 2026-09-05: no driver in the env, no code
   talks to it. Revisit only when there is history worth keeping.
 - **Streamlit dashboard.** Dropped in `cc9b624` in favour of the one-page app.
-- Nothing in the transport is deferred any more — see "Next step".
-- **HTTP `goform` endpoint** (Q6). Telnet plus HEOS cover every capability the
-  page needs; a third protocol earns its place only if one of them fails.
+- **Pushed events / `/api/events`.** Decided 2026-09-12: the page pulls. See
+  `docs/decisions/2026-09-12-staying-current.md`.
+- **The HTTP `goform` endpoint.** Not a choice any more — measured 2026-09-12,
+  the web server answers 403 to everything, so there is nothing to defer to.
 - **Wake-on-LAN and any network recovery from deep standby.** Ruled out on
   evidence — see the "Ruled out" table in `docs/reference/web-interface.md`.
   The page should say so rather than retry.

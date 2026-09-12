@@ -2,8 +2,8 @@
 source: HEOS CLI session against the local unit, Denon RCD-N12 web manual, third-party reverse engineering
 date: 2026-08-30
 status: partial
-verified_against: HEOS CLI 1255, live device, 2026-08-30, 2026-09-07 (in standby), 2026-09-08 and 2026-09-11; AVR telnet 23, live device, 2026-09-06 to 2026-09-08
-untested: sleep, HTTP goform
+verified_against: live device throughout. HEOS CLI 1255 on 2026-08-30, 09-07 (in standby), 09-08, 09-11 and 09-12; AVR telnet 23 on 2026-09-06 to 09-08 and 09-12; HTTP 80/443 and a port scan on 2026-09-12
+untested: nothing outstanding in the command set; see OPEN-QUESTIONS.md for what is still unknown about behaviour
 ---
 
 # RCD-N12 Control Protocols - Reference
@@ -408,6 +408,206 @@ disc" — it means "ask again when the unit is on".
 Closing the tray on a loaded disc **starts playback by itself**, observed
 2026-09-11.
 
+**Port scan, 2026-09-12, `tools/probe_ports.py`, run in both power states:**
+
+| Port | In standby | Powered on |
+|---|---|---|
+| 23 (AVR) | open | open |
+| 80 (HTTP) | open | open |
+| 443 (HTTPS) | open | open |
+| 1255 (HEOS) | open | open |
+| 8080 | refused | refused |
+| 10443 | refused | refused |
+
+**Open question 1 is answered:** the same four ports answer in both states.
+Nothing this project depends on goes away while the unit sleeps, which is the
+half that mattered — it is consistent with HEOS and the AVR protocol both
+having been measured answering in standby.
+
+A note on the instrument: the first runs reported 8080 and 10443 as *timeouts*,
+which would have meant "filtered". They are not — a refusal takes 2.2-2.5 s to
+come back over wifi on this network, and the tool's 2 s timeout expired first.
+It is 6 s now. Two opposite conclusions from the same wire, decided by a
+constant.
+
+**The HTTP interface exists and refuses everything.** Measured 2026-09-12:
+
+```
+http://<ip>/goform/formMainZone_MainZoneXmlStatusLite.xml  -> 301 https://<ip>/…
+https://<ip>/goform/formMainZone_MainZoneXmlStatusLite.xml -> 403 Forbidden
+https://<ip>/goform/formiPhoneAppDirect.xml?PW%3F          -> 403 Forbidden
+http(s)://<ip>/                                            -> 403 Forbidden
+```
+
+**Open question 6 is answered:** `goform` is not a fallback on this firmware.
+Port 80 redirects to **443**, not to the 10443 the third-party notes suggested,
+and 443 then denies every path tried — the two documented `goform` endpoints,
+the root, and `/NetAudio/index.html` — with a browser user agent as well as
+without. The certificate does not chain to anything, as expected for a device.
+
+**`SLP` works, in three digits, up to 90 minutes.** Measured 2026-09-12 on a
+powered-on unit; a sleep timer makes no sound either way:
+
+```
+SLP?      -> SLPOFF          the query works, and OFF is a real answer
+SLP060    -> SLP060          three digits accepted, readback agrees
+SLP30     -> []              two digits ignored outright, timer unchanged
+SLP001    -> SLP001          the floor
+SLP090    -> SLP090          the ceiling
+SLP091    -> []              refused, and so are 095, 100, 110, 119, 120, 999
+SLPOFF    -> SLPOFF          cancels
+```
+
+**Open question 3 is answered**, and the sleep timer needs no server-side
+fallback. Two details worth carrying:
+
+- **The range is 001-090, not the 001-120 documented for the DRA-N4.** The
+  syntax carried over from the sibling model; the range did not. A UI offering
+  two hours would be offering something this unit refuses.
+- **A refused `SLP` is silent.** No echo, no error — the timer simply stays
+  where it was, which is why every probe here reads it back rather than
+  trusting the write. This is the same silent-refusal shape as `SINET`.
+
+Worth noting against the `SI` experience: this is the first carried-over guess
+from another Denon model that turned out **right**. Every input token guessed
+that way was wrong. The lesson is not "never carry over" but "carry over, then
+measure" — the syntax held and the bounds did not.
+
+**There is no `PW` heartbeat on this unit.** Measured 2026-09-12: one socket
+held open on port 23 for 75 s, nothing written, **zero frames received**.
+
+**Open question 5 is answered, against the documentation.** The third party note
+below — an unsolicited `PW` report roughly every 10 s — does not hold here, and
+it never had support from this project's own measurements either: the 2026-09-06
+sweep explicitly recorded a bare `SI?` reply with no `PW` interleaved. Two
+consequences.
+
+- **Front-panel changes can only be learned by polling**, on the AVR side. The
+  page cannot be told that someone pressed a button on the unit; it has to ask.
+  Whatever push exists must come from HEOS `register_for_change_events`, which
+  is a different socket and covers playback and volume, not power.
+- **The frame-filtering in the client stays anyway.** It costs nothing, and
+  taking the last matching frame rather than the first is correct whether or not
+  anything interleaves. What changed is the justification: it guards a
+  documented possibility, not an observed behaviour.
+
+**HEOS `level` and AVR `MV` are the same number.** Measured 2026-09-12 with the
+unit awake and nothing playing, so every step was silent:
+
+| HEOS `level` | `MV?` |
+|---|---|
+| 0 | `MV00` |
+| 1 | `MV01` |
+| 2 | `MV02` |
+| 3 | `MV03` |
+| 5 | `MV05` |
+| 8 | `MV08` |
+| 10 | `MV10` |
+| 25 | `MV25` |
+| 50 | `MV50` |
+| 75 | `MV75` |
+
+**Open question 8 is answered:** identity, across everything tested (0-75). No
+conversion is needed and none should be invented. One earlier row read
+`level 0 → MV02` and was a stale read taken too soon after waking, not a floor;
+repeated cleanly it is `MV00`. No Volume Limit clamp appeared anywhere in the
+range.
+
+This retires the 2026-08-30 warning against mixing the two scales in one
+control. The warning was right to exist -- they *could* have differed, and
+guessing would have been a real error -- but on this unit the answer is that
+they do not.
+
+**`PWON` is confirmed in under half a second.** Measured 2026-09-12, three cold
+starts from standby, `PW?` polled as fast as the transport's 0.5 s pacing
+allows:
+
+```
+cycle 1   +0.53 s  PWON
+cycle 2   +0.52 s  PWON
+cycle 3   +0.52 s  PWON
+```
+
+**Open question 10 is answered:** the first poll always succeeded, so the real
+figure is below the 0.5 s floor this project can measure at. `WAKE_SETTLE_S`
+was 4.0 s, carried over from a third party estimate of 2-5 s; it is now 1.0 s,
+double the measured bound. Note the measurement is of the AVR protocol
+answering, which is not proof that every capability is ready at that moment.
+
+**The metadata lag points the safe way on the one path that mattered.**
+Measured 2026-09-12, three cycles of parking on CD and then starting a favourite
+while `get_source()` was read as fast as the pacing allows:
+
+```
+cycle 2   sid while parked on cd: 1024
+          +1.06 s  source=cd    sid=3      <- metadata already moved, SI has not
+          +2.66 s  source=net   sid=3
+```
+
+**Open question 13 is answered: it cannot happen on any path this project can
+drive.** The feared race needed `SI` to read `SINET` while the payload still
+held the CD's `sid` 1024. It never appeared, and open question 17 explains why:
+the only way into the network input is HEOS playback, so HEOS moves *first* and
+`SI` follows. The metadata leads on this transition rather than trailing.
+
+The lag itself is real and was seen again here in the harmless direction —
+parked on CD, the payload still named the previous stream's `sid` 3. It trails
+on an `SI`-driven change, which is the 2026-09-07 observation, and leads on a
+playback-driven one.
+
+Residual, never observed: someone selecting the network input at the front panel
+or from the HEOS app might order the two differently. Nothing this project sends
+can.
+
+**The unit puts itself to sleep after about five minutes idle, and polling does
+not stop it.** Measured 2026-09-12: woken, playback stopped, then read once a
+minute and otherwise left alone.
+
+```
+07:44  +0.0m  power=on       level=2
+07:48  +4.2m  power=on       level=2
+07:49  +5.3m  power=standby  level=0
+```
+
+**Open question 15 is answered:** between 4.2 and 5.3 minutes, consistent with
+the 5.5 minute bound inferred from an unpolled gap on 2026-09-08. Two things
+follow.
+
+- **Reads do not reset the idle timer.** The confound this measurement was
+  designed around turned out not to exist: a poll every minute did not hold the
+  unit awake. A UI cannot keep the receiver up by watching it, and equally does
+  not have to worry about doing so by accident.
+- **Any reading older than about five minutes is probably wrong about power.**
+  This is the concrete number behind the decision to collapse the page's four
+  reads into one, and behind dimming rather than trusting what is on screen.
+
+The level reading moved in the same run — 2 while awake, 0 once asleep — which
+is the standby artefact already recorded above, not a drift. Open question 18,
+about a level that moved *while awake*, is untouched by this: nothing changed
+across five minutes of idling.
+
+**The idle timeout does not care which input is selected, and `state=play` on
+AUX does not count as activity.** Measured 2026-09-12, AUX selected, operator
+confirming they touched neither remote nor app:
+
+```
+08:02  +4.3m  power=on       level=2   state=play
+08:03  +4.8m  power=standby  level=0   state=stop
+```
+
+Four point eight minutes, against 4.2-5.3 on the network input with playback
+stopped. So the five-minute timeout measured for open question 15 is general,
+and the `play` that AUX reports for as long as it is selected is not playback
+the receiver counts — consistent with it describing the input rather than any
+sound. Whether media the unit actually transports holds it awake is still
+untested.
+
+**The volume level did not drift.** Ten polls over those 4.8 minutes, nothing
+written after the input was set: the level held at 2 throughout. The only
+movement was 2 to 0 at the moment of falling asleep, which is the standby
+artefact recorded above. The mute flag read `on` in that standby sample and
+`off` in others, so it is no more meaningful there than the level is.
+
 - `browse/get_music_sources` → 10 entries: TuneIn (`sid` 3), Deezer (5), SoundCloud
   (9), Tidal (10), Amazon (13), Local Music (1024, `heos_server`), Playlists (1025),
   History (1026), AUX Input (1027), Favorites (1028).
@@ -420,8 +620,10 @@ Closing the tray on a loaded disc **starts playback by itself**, observed
 
 - The RCD-N12 exposes the classic Denon AVR control protocol over **telnet, TCP 23**.
   `PWON`, `PWSTANDBY`, and `PW?` are reported working on this exact model.
-- The unit emits an unsolicited `PW` status report approximately every 10 seconds
-  on an open port-23 connection.
+- The unit was reported to emit an unsolicited `PW` status report approximately
+  every 10 seconds on an open port-23 connection. **Refuted on this unit**,
+  2026-09-12: 75 s of an idle held socket produced nothing. See the confirmed
+  section.
 - There is no true power-off state, only standby. In standby the unit draws ~2 W
   and wi-fi remains active.
 - Menu setting **Settings → Network → Network Control** governs whether the network
@@ -439,16 +641,20 @@ Closing the tray on a loaded disc **starts playback by itself**, observed
 
 ## Inferred or assumed — no evidence either way
 
-- `SLP` sleep-timer syntax is assumed to carry over from DRA-N4 to RCD-N12. Untested.
+- `SLP` sleep-timer syntax was assumed to carry over from the DRA-N4. Measured
+  2026-09-12: the syntax does, the range does not (001-090 here, not 001-120).
+  No longer an assumption — see the confirmed section.
 - `SI?` returns this unit's current input-source token. The full token set for this
   unit was measured 2026-09-06 and now lives in the confirmed section above, so this
   is no longer an assumption.
-- The HTTP `goform` endpoint may or may not exist on this firmware. Some 2023-era
-  Denons redirect to `https://<ip>:10443` and reject plain HTTP.
+- The HTTP `goform` endpoint was assumed to maybe exist. Measured 2026-09-12: the
+  web server is there, redirects plain HTTP to 443, and answers 403 to every
+  path. Not an assumption any more — see the confirmed section.
 - HEOS `browse` with `sid=1027` was assumed to enumerate physical inputs. Measured
   2026-09-06: it does not — it returns one entry pointing back at this player (see
   above). `browse/play_input` for selecting an input remains unverified.
-- Assumed the unit needs 2–5 s after `PWON` before it accepts further commands.
+- The unit was assumed to need 2-5 s after `PWON` before accepting further
+  commands. Measured 2026-09-12: `PW?` answers in under 0.5 s. See above.
 - HEOS port 1255 in standby was assumed open but degraded — errors or an empty
   player list. Measured 2026-09-07: it is neither. Every query answered normally,
   so this is no longer an assumption; see the confirmed section above.
@@ -502,13 +708,14 @@ share the same format, so a reader must tolerate interleaving.
 | `MUON` / `MUOFF` | TCP write | — | echo |
 | `SI?` | TCP write | — | `SI<TOKEN>`; full set for this unit measured, see confirmed section |
 | `SI<TOKEN>` | TCP write | source token | echo |
-| `SLP?` | TCP write | — | `SLP<nnn>` or `SLPOFF` — **assumed** |
-| `SLP<nnn>` | TCP write | 001–120 minutes | echo — **assumed** |
-| `SLPOFF` | TCP write | — | echo — **assumed** |
-| *(none)* | passive read | — | `PW…` heartbeat approx. every 10 s |
+| `SLP?` | TCP write | — | `SLP<nnn>` or `SLPOFF` — **measured** |
+| `SLP<nnn>` | TCP write | 001–090 minutes, three digits | echo, or nothing at all if refused — **measured** |
+| `SLPOFF` | TCP write | — | echo — **measured** |
+| *(none)* | passive read | — | nothing; **measured**, this unit volunteers no status |
 
-`MV` here is the AVR-protocol volume scale and is **not** the same scale as HEOS
-`level`. Do not mix the two in one UI control without measuring the mapping.
+`MV` here is the AVR-protocol volume scale. Measured 2026-09-12 it carries the
+**same number** as the HEOS `level`, so the two can be mixed after all — but the
+measurement is what licenses that, not the resemblance.
 
 ### C. Denon HTTP control — existence unverified on this model
 
@@ -528,7 +735,7 @@ Try port 80 first, then 8080. Status readback is a separate path.
 | `StreamReader.ReadExisting()` in PowerShell | Method belongs to `SerialPort`, not `StreamReader`. Use `stream.DataAvailable` plus `Read()`. |
 | HEOS CLI for power, standby, or sleep | The protocol has no such commands. It covers playback, queue, volume, and browse only. Power must come from the AVR protocol on port 23 or HTTP. |
 | Treating HEOS `level` as decibels | It is an absolute 0–100 scale. `level=1` sets volume to 1/100, it does not add 1 dB. |
-| Opening and closing a HEOS socket per command under polling | Exhausts the connection ceiling. Hold one socket with a lock; use registered change events instead of polling. |
+| Opening and closing a HEOS socket per command **under rapid polling** | Reported to exhaust the connection ceiling. Qualified 2026-09-12: this project has connected per command on 1255 since the start and has exhausted nothing, because every transaction is paced 0.5 s apart and nothing polls in a loop. The warning stands for a design that polls hard; it is not an argument against connecting per command as such. |
 | Hardcoding input-source tokens from other Denon models | Token sets differ across models. Query `SI?` on this unit first. |
 | Holding port 23 open permanently | The receiver accepts one telnet connection and refuses all others, blocking manual access and any second consumer. Connect, command, close. |
 | Firing commands back to back with no delay | Reported to soft-lock Denon units. Pace at 300–500 ms minimum. |

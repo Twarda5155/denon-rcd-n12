@@ -1,7 +1,7 @@
 # Local control server
 
 Status: accepted; partly implemented. See "What exists" below, kept current as
-of 2026-09-11 — the proposed surface further down is still a proposal and parts
+of 2026-09-12 — the proposed surface further down is still a proposal and parts
 of it may never be built.
 
 ## Context
@@ -22,7 +22,9 @@ access to the receiver.
 
 Transport routing: volume, mute, and playback go to HEOS 1255 over a held socket;
 power, source, and sleep go to port 23 over short-lived connections. `/api/sleep`
-falls back to a server-side timer firing `PWSTANDBY` if `SLP` proves unsupported.
+was to fall back to a server-side timer firing `PWSTANDBY` if `SLP` proved
+unsupported. It does not need to: `SLP` works, in three digits up to 090
+(measured 2026-09-12).
 
 ## Consequences
 
@@ -30,10 +32,12 @@ falls back to a server-side timer firing `PWSTANDBY` if `SLP` proves unsupported
   different framing and lifecycles.
 - The server becomes a single point of failure and the sole owner of the port 23
   connection; if it dies, all power/source/sleep control is lost until restart.
-- The sleep fallback timer lives in the server process, so its state does not
-  survive a restart.
-- `/api/status.volume` reports the HEOS 0-100 scale. If `MV` readback is ever
-  surfaced, it must be a separate field, not silently converted.
+- The sleep fallback timer is not needed and will not be built: `SLP` is
+  supported, so the state lives in the receiver rather than in this process.
+- `/api/status.volume` reports the HEOS 0-100 scale. The caution about never
+  silently converting it to `MV` was overtaken by measurement on 2026-09-12:
+  the two carry the same number, at every point tested from 0 to 75. A second
+  field would still be honest, but no arithmetic sits between them.
 
 ## What exists
 
@@ -76,10 +80,11 @@ as a write, but starting a favourite moves the unit there (measured
 2026-09-11), so `POST /api/favorites` does what a `net` entry in `/api/sources`
 could not.
 
-Playback is a read. `player/set_play_state` was exercised on this unit on
-2026-09-08 and *accepted* without changing anything — there was nothing playing
-to change — so whether it works is still unknown (open question 16), and this
-project does not ship controls that might do nothing.
+Playback is still a read, but no longer for want of knowing: `set_play_state`
+was settled on 2026-09-11. It controls playback, and the medium decides what
+pause means — a disc pauses and keeps its track, a stream cannot be held and is
+stopped instead. A transport control can therefore ship whenever it is wanted,
+with `pause` explained rather than hidden.
 
 ## API surface
 
@@ -97,4 +102,4 @@ what actually answers.
 | `/api/source` | POST | `id` | `{ok, source}` |
 | `/api/transport` | POST | `action=play\|pause\|stop\|next\|prev` | `{ok, play_state}` |
 | `/api/sleep` | POST | `minutes=0-120` (0 = off) | `{ok, sleep_minutes}` |
-| `/api/events` | GET (SSE) | — | Server-sent events mirroring HEOS change events and `PW` heartbeat |
+| `/api/events` | GET (SSE) | — | Server-sent events mirroring HEOS change events. The `PW` heartbeat this row also promised does not exist on this unit (open question 5, 2026-09-12), so power would still have to be polled |
