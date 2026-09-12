@@ -1,8 +1,9 @@
 """Command-line entry point.
 
-``serve`` starts the local one-page control app; ``power``, ``volume``,
-``mute``, ``source`` and ``playback`` are the same queries and writes without a
-browser, useful for checking the device path when the page misbehaves.
+``serve`` starts the local one-page control app; ``status``, ``power``,
+``volume``, ``mute``, ``source``, ``playback`` and ``sleep`` are the same
+queries and writes without a browser, useful for checking the device path when
+the page misbehaves.
 """
 
 from __future__ import annotations
@@ -11,6 +12,9 @@ import argparse
 
 from .client import (
     SELECTABLE_SOURCES,
+    SETTABLE_PLAY_STATES,
+    SLEEP_MAX,
+    SLEEP_MIN,
     SOURCE_NET,
     SOURCE_SERVER,
     VOLUME_MAX,
@@ -61,7 +65,20 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
-    sub.add_parser("playback", help="read the transport state and what is playing")
+    playback = sub.add_parser(
+        "playback", help="read the transport state, or drive it"
+    )
+    playback.add_argument("state", nargs="?", choices=sorted(SETTABLE_PLAY_STATES))
+
+    sleep = sub.add_parser("sleep", help="read or set the sleep timer")
+    sleep.add_argument(
+        "minutes",
+        nargs="?",
+        type=int,
+        help=f"{SLEEP_MIN}-{SLEEP_MAX} to arm it, 0 to cancel",
+    )
+
+    sub.add_parser("status", help="read everything in one go")
 
     args = parser.parse_args(argv)
 
@@ -96,8 +113,19 @@ def main(argv: list[str] | None = None) -> int:
                 print(client.get_source())
             else:
                 print(client.set_source(args.name))
+        elif args.command == "sleep":
+            minutes = (
+                client.get_sleep() if args.minutes is None else client.set_sleep(args.minutes)
+            )
+            print(f"{minutes} min" if minutes else "off")
+        elif args.command == "status":
+            state = client.get_status()
+            for key in sorted(state):
+                print(f"{key:<12} {state[key]}")
         else:
-            playing = client.get_playback()
+            playing = (
+                client.get_playback() if args.state is None else client.set_play_state(args.state)
+            )
             # Title and artist only: the remaining fields repeat them often
             # enough that a one-line summary is clearer without them.
             detail = " - ".join(p for p in (playing["title"], playing["artist"]) if p)

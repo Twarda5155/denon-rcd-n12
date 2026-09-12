@@ -11,6 +11,9 @@ from denon_rcd_n12.client import (
     FAVORITES_SID,
     PLAY_STATES,
     SELECTABLE_SOURCES,
+    SETTABLE_PLAY_STATES,
+    SLEEP_MAX,
+    SLEEP_MIN,
     SOURCE_NET,
     SOURCE_SERVER,
     SOURCES,
@@ -601,6 +604,149 @@ class FavoritesTests(unittest.TestCase):
         client, telnet, _ = build()
         client.play_favorite(1)
         self.assertEqual(telnet.commands, [])
+
+
+class TransportControlTests(unittest.TestCase):
+    """Driving play, pause and stop."""
+
+    def setUp(self) -> None:
+        """Collapse the post-command settle delay so the suite stays fast."""
+        original = client_module.PLAYBACK_SETTLE_S
+        client_module.PLAYBACK_SETTLE_S = 0.0
+        self.addCleanup(setattr, client_module, "PLAYBACK_SETTLE_S", original)
+
+    def test_every_settable_state_is_sent(self) -> None:
+        for state in SETTABLE_PLAY_STATES:
+            with self.subTest(state=state):
+                client, _, heos = build()
+                client.set_play_state(state)
+                self.assertEqual(
+                    heos.commands[0],
+                    f"heos://player/set_play_state?pid={heos.pid}&state={state}",
+                )
+
+    def test_unknown_cannot_be_asked_for(self) -> None:
+        # The receiver reports it while a change settles; there is no such
+        # thing to request, and pretending otherwise would send a command the
+        # unit has never been seen to accept.
+        client, _, heos = build()
+        self.assertIn("unknown", PLAY_STATES)
+        with self.assertRaises(ValueError):
+            client.set_play_state("unknown")
+        self.assertEqual(heos.commands, [])
+
+    def test_nonsense_state_is_rejected_before_the_device(self) -> None:
+        client, _, heos = build()
+        with self.assertRaises(ValueError):
+            client.set_play_state("louder")
+        self.assertEqual(heos.commands, [])
+
+    def test_reports_playback_afterwards(self) -> None:
+        client, _, _ = build(play_state="pause")
+        self.assertEqual(client.set_play_state("pause")["state"], "pause")
+
+    def test_never_touches_the_telnet_transport(self) -> None:
+        client, telnet, _ = build()
+        client.set_play_state("stop")
+        self.assertEqual(telnet.commands, [])
+
+    def test_on_unreachable_device_raises(self) -> None:
+        client, _, _ = build(fail=True)
+        with self.assertRaises(DeviceError):
+            client.set_play_state("play")
+
+
+class SleepTests(unittest.TestCase):
+    """The sleep timer, in the range this unit actually accepts."""
+
+    def test_reads_off_as_zero(self) -> None:
+        client, _, _ = build()
+        self.assertEqual(client.get_sleep(), 0)
+
+    def test_arms_and_reads_back(self) -> None:
+        client, telnet, _ = build()
+        self.assertEqual(client.set_sleep(60), 60)
+        self.assertEqual(telnet.sleep, 60)
+
+    def test_zero_cancels(self) -> None:
+        client, telnet, _ = build()
+        client.set_sleep(45)
+        self.assertEqual(client.set_sleep(0), 0)
+        self.assertEqual(telnet.sleep, 0)
+
+    def test_pads_to_three_digits(self) -> None:
+        # Two digits are ignored by the receiver, silently. The padding is what
+        # keeps a one-minute timer from being a no-op.
+        client, telnet, _ = build()
+        client.set_sleep(5)
+        self.assertIn("SLP005", telnet.commands)
+
+    def test_accepts_the_bounds(self) -> None:
+        for minutes in (0, SLEEP_MIN, SLEEP_MAX):
+            with self.subTest(minutes=minutes):
+                client, _, _ = build()
+                self.assertEqual(client.set_sleep(minutes), minutes)
+
+    def test_rejects_values_the_unit_refuses_in_silence(self) -> None:
+        # The device answers an out-of-range SLP with nothing at all, leaving
+        # the old timer in place. Catching it here is the difference between an
+        # error and a control that appears to work.
+        for minutes in (SLEEP_MAX + 1, 120, -1):
+            with self.subTest(minutes=minutes):
+                client, telnet, _ = build()
+                with self.assertRaises(ValueError):
+                    client.set_sleep(minutes)
+                self.assertEqual(telnet.commands, [])
+
+    def test_rejects_a_non_integer(self) -> None:
+        client, telnet, _ = build()
+        with self.assertRaises(ValueError):
+            client.set_sleep("60")  # type: ignore[arg-type]
+        self.assertEqual(telnet.commands, [])
+
+    def test_a_sleeping_unit_refuses_the_write_and_says_so(self) -> None:
+        # Measured 2026-09-12: SLP draws no echo in standby and the timer stays
+        # where it was. Returning that would be a control that appears to work.
+        client, telnet, _ = build(power="standby")
+        with self.assertRaises(DeviceError) as caught:
+            client.set_sleep(30)
+        self.assertIn("standby", str(caught.exception))
+        self.assertEqual(telnet.sleep, 0)
+
+    def test_never_touches_the_heos_transport(self) -> None:
+        client, _, heos = build()
+        client.set_sleep(30)
+        self.assertEqual(heos.commands, [])
+
+    def test_on_unreachable_device_raises(self) -> None:
+        client, _, _ = build(fail=True)
+        with self.assertRaises(DeviceError):
+            client.get_sleep()
+
+
+class StatusTests(unittest.TestCase):
+    """One read standing in for four."""
+
+    def test_carries_every_field_the_page_shows(self) -> None:
+        client, _, _ = build(power="on", volume=42, mute=True, source="SICD")
+        status = client.get_status()
+        for key in ("power", "volume", "mute", "source", "state", "title", "sleep"):
+            with self.subTest(key=key):
+                self.assertIn(key, status)
+
+    def test_agrees_with_the_reads_it_replaces(self) -> None:
+        client, _, _ = build(power="standby", volume=7, source="SIANALOG1")
+        status = client.get_status()
+        self.assertEqual(status["power"], "standby")
+        self.assertEqual(status["volume"], 7)
+        self.assertEqual(status["source"], "aux")
+
+    def test_a_single_failure_fails_the_whole_read(self) -> None:
+        # Half a picture is worse than none: the page would show some rows
+        # fresh and some stale with no way to tell them apart.
+        client, _, _ = build(fail=True)
+        with self.assertRaises(DeviceError):
+            client.get_status()
 
 
 class ParsingTests(unittest.TestCase):

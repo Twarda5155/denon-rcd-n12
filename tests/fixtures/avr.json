@@ -13,12 +13,14 @@
     "PW?": ["PWON"],
     "PWON": ["PWON"],
     "PWSTANDBY": ["PWSTANDBY"],
-    "MV?": ["MV20"]
+    "MV?": ["MV20"],
+    "SLP?": ["SLPOFF"]
   },
   "standby": {
     "PW?": ["PWSTANDBY"],
     "PWON": ["PWON"],
     "PWSTANDBY": ["PWSTANDBY"],
-    "MV?": ["MV20"]
+    "MV?": ["MV20"],
+    "SLP?": ["SLPOFF"]
   }
 }

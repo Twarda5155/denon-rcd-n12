@@ -53,6 +53,7 @@ class FakeTelnetTransport:
         heartbeat: bool = False,
         fail: bool = False,
         host: str = "10.0.0.1",
+        sleep: int = 0,
     ) -> None:
         """Configure the fake AVR endpoint.
 
@@ -62,11 +63,13 @@ class FakeTelnetTransport:
             heartbeat: Prepend a stale opposite-state ``PW`` frame to replies.
             fail: Raise :class:`DeviceError` on every call.
             host: Address reported by the transport.
+            sleep: Initial sleep timer in minutes; 0 is off.
         """
         self.host = host
         self.power = power
         self.heartbeat = heartbeat
         self.fail = fail
+        self.sleep = sleep
         self.commands: list[str] = []
         self._fixture = load_fixture("avr.json")
         self.sources: list[str] = self._fixture["sources"]
@@ -97,8 +100,24 @@ class FakeTelnetTransport:
             self.power = "standby"
         elif command in self.sources:
             self.source = command
+        if command.startswith("SLP") and command != "SLP?":
+            # Refused in silence on the real unit -- no echo, timer unchanged --
+            # both for values outside 001-090 and for any write at all while
+            # the unit is in standby. Reproduced here because the client's
+            # readback check is the only thing standing in for it.
+            digits = command[3:]
+            if self.power == "standby":
+                return []
+            if digits == "OFF":
+                self.sleep = 0
+            elif digits.isdigit() and 1 <= int(digits) <= 90 and len(digits) == 3:
+                self.sleep = int(digits)
+            else:
+                return []
         if command == "SI?" or command in self.sources:
             frames = [self.source]
+        elif command.startswith("SLP"):
+            frames = [f"SLP{self.sleep:03d}" if self.sleep else "SLPOFF"]
         else:
             frames = self._fixture[self.power].get(command)
         if frames is None:
@@ -182,6 +201,10 @@ class FakeHeosTransport:
             self.volume = int(params["level"][0])
         elif name == "player/set_mute":
             self.mute = params["state"][0] == "on"
+        elif name == "player/set_play_state":
+            # The real unit decides what pause means per medium; the fake just
+            # holds what was asked for, which is what the readback reports.
+            self.play_state = params["state"][0]
         elif name in ("player/volume_up", "player/volume_down"):
             # Relative, and clamped the way the scale is: the device has no
             # level below 0 or above 100 to step onto.

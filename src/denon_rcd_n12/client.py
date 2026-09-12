@@ -59,6 +59,24 @@ SOURCES = {
 #: while an input change settles. Treat it as "ask again", not as an error.
 PLAY_STATES = ("play", "pause", "stop", "unknown")
 
+#: The transport states this unit accepts as a command. ``unknown`` is missing
+#: on purpose: the receiver reports it while a change settles but there is no
+#: such thing to ask for.
+SETTABLE_PLAY_STATES = ("play", "pause", "stop")
+
+#: Seconds to let a transport command settle before reading it back. Measured
+#: 2026-09-11: a pause had settled by 1.5 s, and a resume usually by 2 s though
+#: it can pass through ``unknown`` for longer. The readback is therefore not a
+#: guarantee -- it is what the unit says at that moment.
+PLAYBACK_SETTLE_S = 1.5
+
+#: Bounds of the sleep timer, in minutes. Measured 2026-09-12: 001 and 090 are
+#: accepted, 091 and everything above it is refused in silence. The sibling
+#: DRA-N4 documents 001-120; that part did not carry over. Zero is not a timer
+#: value -- it is how this client spells ``SLPOFF``.
+SLEEP_MIN = 1
+SLEEP_MAX = 90
+
 #: The network input, as :meth:`DenonClient.get_source` reports it when a
 #: streaming service is playing. Readable, not selectable -- see
 #: :data:`SELECTABLE_SOURCES`.
@@ -104,6 +122,7 @@ SOURCE_SETTLE_S = 1.0
 
 _PW_FRAME = re.compile(r"PW(ON|STANDBY)")
 _SI_FRAME = re.compile(r"SI[A-Z0-9/]+")
+_SLP_FRAME = re.compile(r"SLP(OFF|\d{3})")
 
 #: Reverse of :data:`SOURCES`. Unambiguous because ``SINET`` appears once there;
 #: the server sense of that token is resolved separately, through HEOS.
@@ -435,6 +454,120 @@ class DenonClient:
             "media_type": media.get("type") or None,
         }
 
+    def set_play_state(self, state: str) -> dict[str, Any]:
+        """Drive the transport: play, pause or stop.
+
+        What ``pause`` does depends on the medium, and the receiver decides
+        rather than this client. Measured 2026-09-11: a disc pauses and keeps
+        its track, while a live stream cannot be held and is stopped instead,
+        the state settling on ``stop`` and the title falling back to the
+        stream's bitrate. Both are the unit honouring the command; neither is
+        it ignoring one.
+
+        Args:
+            state: One of :data:`SETTABLE_PLAY_STATES`.
+
+        Returns:
+            Playback as :meth:`get_playback` reports it after the command. It
+            may still read ``unknown``: a resume can take several seconds to
+            settle, and the readback is what the unit says at that moment
+            rather than a promise about where it lands.
+
+        Raises:
+            ValueError: If ``state`` is not a state that can be asked for.
+            DeviceError: If the receiver rejected the command or could not be
+                read back.
+        """
+        if state not in SETTABLE_PLAY_STATES:
+            raise ValueError(
+                f"play state must be one of {list(SETTABLE_PLAY_STATES)}, got {state!r}"
+            )
+        self.heos.query(
+            f"heos://player/set_play_state?pid={self.heos.pid}&state={state}"
+        )
+        time.sleep(PLAYBACK_SETTLE_S)
+        return self.get_playback()
+
+    def get_sleep(self) -> int:
+        """Read the sleep timer, in minutes.
+
+        Returns:
+            Minutes remaining, or ``0`` when no timer is set. The receiver
+            spells that ``SLPOFF``; zero is this client's name for it, so a
+            caller can treat the value as a number throughout.
+
+        Raises:
+            DeviceError: If no ``SLP`` frame arrived within the listen window.
+        """
+        return self._sleep_from(self.telnet.send("SLP?", expect=_SLP_FRAME.pattern))
+
+    def set_sleep(self, minutes: int) -> int:
+        """Arm or cancel the sleep timer, and read back what it settled on.
+
+        The range is the unit's own, measured rather than carried over: 1 to 90
+        minutes, where the sibling model documents 120. A value outside it is
+        refused **silently** by the receiver -- no echo, timer unchanged -- so
+        the bound is enforced here, where it can be explained, rather than left
+        to a command that fails without saying so.
+
+        A sleeping unit refuses the write the same silent way, measured
+        2026-09-12. The readback is therefore compared against what was asked
+        for, and a mismatch is raised rather than returned: reporting the timer
+        the receiver kept would be a control that appears to work.
+
+        Args:
+            minutes: 1 to 90 to arm the timer, or 0 to cancel it.
+
+        Returns:
+            The timer as :meth:`get_sleep` reports it after the write.
+
+        Raises:
+            ValueError: If ``minutes`` is not 0 or within the accepted range.
+            DeviceError: If the receiver could not be reached, could not be read
+                back, or ignored the write.
+        """
+        if not isinstance(minutes, int) or minutes < 0 or minutes > SLEEP_MAX:
+            raise ValueError(
+                f"sleep must be 0 to cancel, or {SLEEP_MIN}-{SLEEP_MAX} minutes, "
+                f"got {minutes!r}"
+            )
+        command = "SLPOFF" if minutes == 0 else f"SLP{minutes:03d}"
+        self.telnet.send(command, expect=_SLP_FRAME.pattern, listen=1.5)
+        settled = self.get_sleep()
+        if settled != minutes:
+            raise DeviceError(
+                f"the receiver ignored {command}: asked for {minutes}, reads "
+                f"{settled}. It refuses the sleep timer while in standby; wake "
+                "it first."
+            )
+        return settled
+
+    def get_status(self) -> dict[str, Any]:
+        """Read everything the page shows, in one call.
+
+        Costs seven or eight paced device transactions -- power, the sleep
+        timer and the input from the AVR side, volume, mute and playback from
+        HEOS -- so it takes several seconds. That is the point: it is one wait
+        instead of four, and the 2026-09-12 decision record settles that the
+        page pulls rather than subscribes.
+
+        Returns:
+            The union of :meth:`get_power`, :meth:`get_volume`,
+            :meth:`get_source`, :meth:`get_playback` and :meth:`get_sleep`,
+            with ``power``, ``source`` and ``sleep`` as their own keys.
+
+        Raises:
+            DeviceError: If any of the underlying reads failed. The whole call
+                fails rather than returning a half-built picture.
+        """
+        return {
+            "power": self.get_power(),
+            **self.get_volume(),
+            "source": self.get_source(),
+            **self.get_playback(),
+            "sleep": self.get_sleep(),
+        }
+
     def list_favorites(self) -> list[dict[str, Any]]:
         """List the favourites stored on the receiver, over HEOS.
 
@@ -565,6 +698,24 @@ class DenonClient:
         if not matches:
             raise DeviceError(f"no SI frame in reply: {frames!r}")
         return matches[-1]
+
+    @staticmethod
+    def _sleep_from(frames: list[str]) -> int:
+        """Pick the sleep timer out of a batch of AVR frames.
+
+        Args:
+            frames: Frames as returned by :meth:`TelnetTransport.send`.
+
+        Returns:
+            Minutes, or ``0`` for ``SLPOFF``.
+
+        Raises:
+            DeviceError: If no frame carried a sleep value.
+        """
+        matches = [m.group(1) for f in frames if (m := _SLP_FRAME.search(f))]
+        if not matches:
+            raise DeviceError(f"no SLP frame in reply: {frames!r}")
+        return 0 if matches[-1] == "OFF" else int(matches[-1])
 
     @staticmethod
     def _power_from(frames: list[str]) -> str:

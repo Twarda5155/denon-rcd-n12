@@ -49,6 +49,13 @@
       "message": "pid={pid}&state={state}"
     }
   },
+  "player/set_play_state": {
+    "heos": {
+      "command": "player/set_play_state",
+      "result": "success",
+      "message": "pid={pid}&state={state}"
+    }
+  },
   "browse/play_preset": {
     "heos": {
       "command": "browse/play_preset",
