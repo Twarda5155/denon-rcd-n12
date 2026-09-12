@@ -18,21 +18,32 @@
 
   * { box-sizing: border-box; }
 
+  /* Top-aligned rather than centred: a wide layout that also centres
+     vertically wastes the height it just saved. */
   body {
     margin: 0;
     min-height: 100vh;
     display: flex;
-    align-items: center;
     justify-content: center;
     background: var(--bg);
     color: var(--fg);
     font: 14px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
   }
 
-  main { width: min(34rem, 100%); padding: 2rem 1.5rem; }
+  main { width: min(72rem, 100%); padding: 1.5rem; }
+
+  /* The title and the one control that refreshes everything share a line,
+     because a heading alone is a row of height buying nothing. */
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
 
   h1 {
-    margin: 0 0 1.5rem;
+    margin: 0;
     font-size: 14px;
     font-weight: 400;
     letter-spacing: 0.12em;
@@ -40,50 +51,57 @@
     color: var(--dim);
   }
 
-  dl {
-    margin: 0 0 1.5rem;
+  /* Readouts as a strip rather than a stack. Six rows of label-and-value cost
+     about 13rem of height; the same six side by side cost about 4rem, which is
+     most of the scrolling gone on its own. */
+  .strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+    gap: 0 1rem;
+    margin: 0 0 1.25rem;
+    padding: 0.75rem 0;
     border-top: 1px solid var(--rule);
-  }
-
-  div.row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 1rem;
-    padding: 0.6rem 0;
     border-bottom: 1px solid var(--rule);
   }
 
-  dt { color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; font-size: 12px; white-space: nowrap; }
-  dd { margin: 0; font-variant-numeric: tabular-nums; }
-  dd.pending { color: var(--dim); }
+  .cell { min-width: 0; }
+  .cell dt {
+    color: var(--dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 11px;
+  }
+  .cell dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  .cell dd.pending { color: var(--dim); }
 
-  /* Track titles are the one value here of unbounded length; let them wrap
-     rather than push the layout wider than the column. */
-  dd#track { text-align: right; overflow-wrap: anywhere; }
+  /* Track titles are the one value of unbounded length, so the cell gets twice
+     the room and is allowed to wrap inside it. */
+  .cell.wide-cell { grid-column: span 2; }
 
-  /* Two columns of controls under one shared block of readouts. Both columns
-     start at the top of the grid, so the first button of each — check power
-     and check source — sits on the same line. */
+  /* Columns that fit themselves to the width available. No breakpoints: the
+     browser packs four across a laptop, two across a tablet, one on a phone. */
   .panels {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
     align-items: start;
     gap: 1.25rem;
-  }
-  .column { display: flex; flex-direction: column; }
-
-  /* Narrow viewports get the old single column back rather than two columns
-     too cramped for a button to hold its label. */
-  @media (max-width: 32rem) {
-    .panels { grid-template-columns: 1fr; }
   }
 
   .actions { display: flex; flex-direction: column; gap: 0.5rem; }
   .actions + .actions { margin-top: 1.25rem; }
 
-  /* Three buttons that each cost one device transaction, kept on one line so
-     the column does not grow taller than the readouts it belongs to. */
+  .group-label {
+    margin: 0 0 0.15rem;
+    color: var(--dim);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
   .steps { display: flex; gap: 0.5rem; }
   .steps button { flex: 1; text-align: center; }
 
@@ -113,7 +131,7 @@
   button {
     font: inherit;
     text-align: left;
-    padding: 0.55rem 0.75rem;
+    padding: 0.5rem 0.7rem;
     color: var(--fg);
     background: transparent;
     border: 1px solid var(--rule);
@@ -124,10 +142,12 @@
   button:active:enabled { background: var(--fg); color: var(--bg); }
   button:disabled { color: var(--dim); cursor: default; }
 
+  #check-all { white-space: nowrap; }
+
   select {
     font: inherit;
     width: 100%;
-    padding: 0.55rem 0.75rem;
+    padding: 0.5rem 0.7rem;
     color: var(--fg);
     background: transparent;
     border: 1px solid var(--rule);
@@ -136,11 +156,9 @@
   }
   select:disabled { color: var(--dim); cursor: default; }
 
-  /* A list, not buttons: these are read from the receiver and nothing here
-     can start one playing yet. */
   .favorites {
     margin: 0;
-    padding: 0 0.75rem;
+    padding: 0 0.7rem;
     list-style: none;
     font-size: 12px;
     overflow-wrap: anywhere;
@@ -149,13 +167,9 @@
   .favorites li:last-child { border-bottom: 0; }
   .favorites li.empty { color: var(--dim); border-bottom: 0; }
 
-  /* The one control that draws the whole picture, so it spans both columns
-     and reads as a heading for them rather than as one more button. */
-  .wide { width: 100%; text-align: center; margin-bottom: 1.25rem; }
-
   .hint {
     margin: 0;
-    padding: 0 0.75rem;
+    padding: 0 0.7rem;
     color: var(--dim);
     font-size: 12px;
   }
@@ -172,80 +186,75 @@
 </head>
 <body>
 <main>
-  <h1>denon rcd-n12</h1>
+  <header>
+    <h1>denon rcd-n12</h1>
+    <button id="check-all">check everything</button>
+  </header>
 
-  <dl>
-    <div class="row"><dt>power</dt><dd id="power" class="pending">&mdash;</dd></div>
-    <div class="row"><dt>volume</dt><dd id="volume" class="pending">&mdash;</dd></div>
-    <div class="row"><dt>source</dt><dd id="source" class="pending">&mdash;</dd></div>
-    <div class="row"><dt>state</dt><dd id="state" class="pending">&mdash;</dd></div>
-    <div class="row"><dt>track</dt><dd id="track" class="pending">&mdash;</dd></div>
-    <div class="row"><dt>sleep</dt><dd id="sleep" class="pending">&mdash;</dd></div>
+  <dl class="strip">
+    <div class="cell"><dt>power</dt><dd id="power" class="pending">&mdash;</dd></div>
+    <div class="cell"><dt>volume</dt><dd id="volume" class="pending">&mdash;</dd></div>
+    <div class="cell"><dt>sleep</dt><dd id="sleep" class="pending">&mdash;</dd></div>
+    <div class="cell"><dt>source</dt><dd id="source" class="pending">&mdash;</dd></div>
+    <div class="cell"><dt>state</dt><dd id="state" class="pending">&mdash;</dd></div>
+    <div class="cell wide-cell"><dt>track</dt><dd id="track" class="pending">&mdash;</dd></div>
   </dl>
 
-  <!-- One read for everything. Slower than any single one and faster than
-       all four, which is the trade the 2026-09-12 decision record makes. -->
-  <button id="check-all" class="wide">check everything</button>
-
   <div class="panels">
-    <div class="column">
-      <div class="actions">
-        <button id="check-power">check power</button>
-        <button id="toggle-power">toggle power</button>
-        <select id="sleep-pick" aria-label="sleep timer">
-          <option value="" selected disabled>&mdash; sleep timer &mdash;</option>
-          <option value="0">cancel the timer</option>
-          <option value="15">15 min</option>
-          <option value="30">30 min</option>
-          <option value="60">60 min</option>
-          <option value="90">90 min (the unit's maximum)</option>
-        </select>
-        <p class="hint">the receiver refuses the timer while asleep; wake it
-          first</p>
-        <button id="set-sleep" disabled>set sleep</button>
-      </div>
-
-      <div class="actions">
-        <button id="check-volume">check volume</button>
-        <div class="slider">
-          <input id="level" type="range" min="0" max="100" step="1" value="20"
-                 aria-label="volume level">
-          <output id="level-out" class="pending" for="level">20</output>
-        </div>
-        <button id="set-volume">set volume</button>
-        <div class="steps">
-          <button id="volume-down">vol &minus;</button>
-          <button id="volume-up">vol +</button>
-        </div>
-        <button id="toggle-mute">toggle mute</button>
-      </div>
+    <div class="actions">
+      <p class="group-label">power</p>
+      <button id="check-power">check power</button>
+      <button id="toggle-power">toggle power</button>
+      <select id="sleep-pick" aria-label="sleep timer">
+        <option value="" selected disabled>&mdash; sleep timer &mdash;</option>
+        <option value="0">cancel the timer</option>
+        <option value="15">15 min</option>
+        <option value="30">30 min</option>
+        <option value="60">60 min</option>
+        <option value="90">90 min (the unit's maximum)</option>
+      </select>
+      <p class="hint">refused while asleep; wake it first</p>
+      <button id="set-sleep" disabled>set sleep</button>
     </div>
 
     <div class="actions">
+      <p class="group-label">volume</p>
+      <button id="check-volume">check volume</button>
+      <div class="slider">
+        <input id="level" type="range" min="0" max="100" step="1" value="20"
+               aria-label="volume level">
+        <output id="level-out" class="pending" for="level">20</output>
+      </div>
+      <button id="set-volume">set volume</button>
+      <div class="steps">
+        <button id="volume-down">vol &minus;</button>
+        <button id="volume-up">vol +</button>
+      </div>
+      <button id="toggle-mute">toggle mute</button>
+    </div>
+
+    <div class="actions">
+      <p class="group-label">playback</p>
       <button id="check-playback">check playback</button>
       <div class="steps">
         <button id="play">play</button>
         <button id="pause">pause</button>
         <button id="stop">stop</button>
       </div>
-      <p class="hint">pause holds a disc; a live stream cannot be held, so the
-        receiver stops it</p>
+      <p class="hint">pause holds a disc; a stream cannot be held, so it stops</p>
+      <button id="list-favorites">list favorites</button>
+      <ul id="favorites" class="favorites"></ul>
+    </div>
+
+    <div class="actions">
+      <p class="group-label">source</p>
       <button id="check-source">check source</button>
       <select id="source-pick" aria-label="source to select">
-        <!-- Disabled and selected, so the list opens on a prompt rather than
-             on phono: the first input is not a default anyone chose, and a
-             picker that already shows a real answer invites setting it by
-             accident. -->
         <option value="" selected disabled>&mdash; choose a source &mdash;</option>
-        <!-- Not an input: picking this starts a stored station rather than
-             switching the receiver's input, so it goes to its own route. The
-             inputs are appended after it, from /api/sources. -->
         <option value="favorite:1">favorite 1</option>
       </select>
       <p class="hint">switching stops playback and wakes a sleeping unit</p>
       <button id="set-source" disabled>set source</button>
-      <button id="list-favorites">list favorites</button>
-      <ul id="favorites" class="favorites"></ul>
     </div>
   </div>
 

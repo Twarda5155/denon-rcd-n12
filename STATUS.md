@@ -15,9 +15,32 @@ What could come next, if it is wanted rather than owed:
 - **The page drawing itself on load** from `/api/status`, rather than opening
   on six dashes. It costs one 3.8 s read per visit, which is the trade to think
   about.
-- **History**, the one thing MariaDB was ever wanted for. Nothing records what
-  the receiver was doing over time; the device log is a command trace, not a
-  series.
+- **A history of sources and streams, written to the database.** The one thing
+  MariaDB was ever wanted for, now named concretely: what input the receiver
+  was on and what was playing on it, over time. `get_source` and `get_playback`
+  already produce exactly those two facts; nothing keeps them. `logs/device.log`
+  is a command trace, not a series — it records that a question was asked, not
+  what the answer was at a given hour.
+
+  Three things to settle before building it, none of them measurements:
+
+  - **Who does the sampling.** A recorder wants to poll on a schedule, which is
+    the opposite of what `docs/decisions/2026-09-12-staying-current.md` decided
+    for the page. That decision was about a page nobody is looking at, so a
+    recorder does not contradict it — but it is a second consumer with its own
+    appetite, and both share one paced device. It needs its own decision record.
+  - **What a sample means when the unit is asleep.** It sleeps after about five
+    minutes idle, and reports a phantom volume of 0 and stale now-playing
+    metadata while it does. Recording those as observations would fill the
+    series with fiction. Standby is probably a row saying "asleep", not a row
+    of values.
+  - **What a row is.** Sampling every minute makes a series mostly repeating
+    itself; recording only transitions makes a much smaller table that answers
+    "what did I listen to" directly, at the cost of never knowing what happened
+    between two samples.
+
+  The driver is not installed and no code touches a database, deliberately
+  since 2026-09-05. Nothing about that changes until this is actually wanted.
 
 ## In flight
 
@@ -48,25 +71,27 @@ Empty.
   over eight paced transactions. Connection desync, chunked bodies and port
   collisions are covered by tests.
 - `static/index.html` — dependency-free single page, fetches nothing off the
-  machine. Two columns of controls under one shared block of readouts, both
-  columns starting at the top of the grid so the first button of each lines up;
-  a narrow viewport collapses them back to one column. Reads out power, volume,
-  source, transport state and track; writes power, volume (absolute and by
-  steps), mute and the input. Two rules keep it from lying: the track is shown
-  solid only at `play` and `pause`, because the unit keeps reporting the last
-  thing it loaded through a stop and through standby, and the power row is
-  dimmed after a source write, because an input write wakes a sleeping unit
-  (Q14). The input picker is filled from `/api/sources` rather than from a copy
-  of the names in the page, and behaves as the volume slider does — the control
-  is a request, the row above is the device's answer. The picker opens on a
-  prompt rather than on the first input, and `set source` stays disabled until
-  something is chosen. It holds one entry that is not an input — `favorite 1`,
-  which starts a stored station over HEOS and routes to `/api/favorites`
-  instead. `list favorites` renders the receiver's stored stations beneath it.
-  A `check everything` button spans both columns and fills every row from
-  `/api/status`; `play`, `pause` and `stop` sit under the playback read with a
-  hint saying what pause does to a stream; the sleep timer is a picker with its
-  own hint, because the receiver refuses it while asleep.
+  machine. Laid out for a horizontal screen rather than a vertical one, since
+  it is read on a laptop: the readouts are a strip of six cells across the top
+  instead of six stacked rows, which is most of the page's former height on its
+  own, and the title shares a line with `check everything`. Below that,
+  named columns — power, volume, playback, source — that fit themselves to the
+  width with `auto-fit` rather than to breakpoints, so a laptop gets four, a
+  tablet two and a phone one. It does not centre vertically: that would spend
+  the height the layout just saved.
+
+  Reads out power, volume, sleep, source, transport state and track; writes
+  power, volume (absolute and by steps), mute, the input, the transport and the
+  timer. Three rules keep it from lying: the track shows solid only at `play`
+  and `pause`, because the unit keeps reporting the last thing it loaded
+  through a stop and through standby; the power row dims after a source write,
+  because an input write wakes a sleeping unit (Q14); and every control whose
+  behaviour is not obvious from its label carries a hint — pause stops a
+  stream, switching inputs stops playback, the sleep timer is refused while the
+  unit sleeps. The input picker is filled from `/api/sources` rather than from
+  a copy of the names in the page, opens on a prompt rather than on the first
+  input, and holds one entry that is not an input: `favorite 1`, which starts a
+  stored station over HEOS.
 - `cli.py` — `serve`, `status`, `power`, `volume`, `mute`, `source`,
   `playback`, `sleep`.
 - Tests: 179 passed, 50 subtests, all against fakes with the receiver powered
@@ -114,7 +139,8 @@ each one was believed for days.
 ## Deliberately deferred
 
 - **MariaDB persistence.** Decided 2026-09-05: no driver in the env, no code
-  talks to it. Revisit only when there is history worth keeping.
+  talks to it. Revisit when there is history worth keeping — which now has a
+  name, under "Next step": a series of sources and streams over time.
 - **Streamlit dashboard.** Dropped in `cc9b624` in favour of the one-page app.
 - **Pushed events / `/api/events`.** Decided 2026-09-12: the page pulls. See
   `docs/decisions/2026-09-12-staying-current.md`.
