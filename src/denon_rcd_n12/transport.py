@@ -288,9 +288,13 @@ class TelnetTransport(_PacedTransport):
     def send(self, command: str, expect: str | None = None, listen: float = 2.5) -> list[str]:
         """Send one AVR command and collect the frames that come back.
 
-        The unit emits an unsolicited ``PW`` heartbeat roughly every 10 s, so
-        replies and status reports interleave on one stream. Every frame seen
-        inside the listen window is returned and the caller filters.
+        Every frame seen inside the listen window is returned and the caller
+        filters, rather than the first one being taken as the answer. Third
+        party notes describe an unsolicited ``PW`` report every 10 s or so,
+        which would interleave with replies; measured 2026-09-12, this unit
+        sends nothing at all on an idle socket over 75 s. The tolerance stays
+        because it costs nothing and the alternative fails silently on a
+        firmware that does chatter.
 
         Args:
             command: Bare command token such as ``"PW?"``; CR is appended here.

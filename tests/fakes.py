@@ -39,8 +39,11 @@ class FakeTelnetTransport:
     """Replays fixture AVR traffic in place of a real receiver.
 
     Holds mutable power and source states so writes are observable, records
-    every command for assertions, and can prepend a stale ``PW`` heartbeat
-    frame to reproduce the interleaving seen on the real port-23 stream.
+    every command for assertions, and can prepend a stale ``PW`` frame so the
+    filtering in :mod:`denon_rcd_n12.client` is exercised. That interleaving is
+    described by third party notes and has never been seen on this unit --
+    measured 2026-09-12, it volunteers nothing on an idle socket -- so this
+    reproduces a documented shape rather than an observed one.
     """
 
     def __init__(

@@ -95,9 +95,11 @@ FAVORITE_SETTLE_S = 2.0
 #: against it is enough to tell a local server from a streaming service.
 LOCAL_MEDIA_SID = 1024
 
-#: Seconds to let an input change settle before reading it back. Unlike the
-#: power delays this one is not measured: writing ``SI`` has never been
-#: exercised on this unit. It only has to clear the protocol's 300-500 ms floor.
+#: Seconds to let an input change settle before reading it back. Known
+#: sufficient, not known necessary: every ``SI`` write measured from 2026-09-07
+#: on read back correctly after it, including from standby, where the write
+#: draws no echo at all. Note the write itself is slow -- an echo took 1.07 s
+#: against 23 ms for a query -- so this is charged on top of that.
 SOURCE_SETTLE_S = 1.0
 
 _PW_FRAME = re.compile(r"PW(ON|STANDBY)")
@@ -107,9 +109,15 @@ _SI_FRAME = re.compile(r"SI[A-Z0-9/]+")
 #: the server sense of that token is resolved separately, through HEOS.
 _NAMES = {token: name for name, token in SOURCES.items()}
 
-#: Seconds to let the unit boot after ``PWON`` before reading state back. The
-#: protocol reference estimates 2-5 s before it accepts a follow-up command.
-WAKE_SETTLE_S = 4.0
+#: Seconds to let the unit boot after ``PWON`` before reading state back.
+#: Measured 2026-09-12: ``PW?`` confirmed ``PWON`` at the first poll every time,
+#: three cold starts at 0.52, 0.53 and 0.52 s -- and those are the transport's
+#: own pacing floor, so the unit answered faster than this project can ask. The
+#: 4.0 s carried over from a third party estimate was eight times what the AVR
+#: protocol needs. Kept at double the measured bound rather than at the bound:
+#: answering ``PW?`` is not proof that every other command is ready, and a
+#: readback failure here surfaces as an error on the page.
+WAKE_SETTLE_S = 1.0
 
 #: Seconds to let the unit settle after ``PWSTANDBY``.
 SLEEP_SETTLE_S = 1.5
@@ -545,8 +553,10 @@ class DenonClient:
             frames: Frames as returned by :meth:`TelnetTransport.send`.
 
         Returns:
-            The most recent ``SI`` token seen, the reply having possibly
-            arrived alongside an unsolicited ``PW`` heartbeat.
+            The most recent ``SI`` token seen. Taking the last rather than
+            the first costs nothing and survives an unsolicited ``PW`` frame
+            arriving alongside the reply, which third party notes describe and
+            this unit has never been seen to do.
 
         Raises:
             DeviceError: If no frame carried a source token.
@@ -560,8 +570,8 @@ class DenonClient:
     def _power_from(frames: list[str]) -> str:
         """Pick the power state out of a batch of AVR frames.
 
-        The heartbeat and the query reply are the same token, so the most
-        recent match is authoritative.
+        A status report and a query reply carry the same token, so the most
+        recent match is authoritative whichever it was.
 
         Args:
             frames: Frames as returned by :meth:`TelnetTransport.send`.
