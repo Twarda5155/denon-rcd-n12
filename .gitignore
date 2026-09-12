@@ -1,4 +1,4 @@
-﻿CLAUDE.local.md
+CLAUDE.local.md
 .claude/settings.local.json
 logs/
 config/device.yaml
@@ -6,3 +6,4 @@ __pycache__/
 .pytest_cache/
 notebooks/
 docs/reference/dokumentacja-malego-projektu.docx
+~$*

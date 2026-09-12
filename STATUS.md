@@ -2,14 +2,22 @@
 
 ## Next step
 
-Housekeeping, which is all that is left on the list. `check_power_on_off.py`,
-`check_volume.py` and `get_power_on.py` still sit in the repository root,
-superseded by `client.py` since the first week; `_scratch.txt` likewise. Move
-anything still useful into `tools/`, delete the rest, and add `~$*` to
-`.gitignore` so Word lock files stop showing up in `git status`.
+None owed. The project does what it was built for: the page reads and drives
+power, volume, mute, the input, the transport, the sleep timer and the
+favourites, every capability measured on the unit rather than carried from
+another model, and the open-questions register is empty.
 
-After that the project does what it was for, and further work is a matter of
-wanting something rather than owing it.
+What could come next, if it is wanted rather than owed:
+
+- **Favourites as a list you can start**, instead of `favorite 1` as a fixed
+  entry in the source picker. `list_favorites` already returns each `mid` and
+  `browse/play_preset` already takes a position.
+- **The page drawing itself on load** from `/api/status`, rather than opening
+  on six dashes. It costs one 3.8 s read per visit, which is the trade to think
+  about.
+- **History**, the one thing MariaDB was ever wanted for. Nothing records what
+  the receiver was doing over time; the device log is a command trace, not a
+  series.
 
 ## In flight
 
@@ -17,9 +25,7 @@ Nothing. Working tree clean, `main` even with `origin/main`.
 
 ## To do
 
-Roughly in value order.
-
-- The housekeeping above.
+Empty.
 
 ## Done (recent)
 
@@ -65,6 +71,12 @@ Roughly in value order.
   `playback`, `sleep`.
 - Tests: 179 passed, 50 subtests, all against fakes with the receiver powered
   off (run 2026-09-12).
+- Housekeeping, 2026-09-12: the three bring-up scripts in the repository root
+  and `_scratch.txt` are gone, superseded by `client.py` since the first week.
+  Each hardcoded the receiver's address, which the project's own rules forbid,
+  so they were also a standing counterexample sitting at the top of the tree.
+  Git history keeps them. `~$*` is ignored now, so Word lock files stop
+  appearing in `git status`.
 - `tools/probe_device.py`, `tools/probe_ports.py`, and `tools/probe_identity.py`
   — the last prints a ready-to-paste `config/device.yaml` for a receiver at a
   given address, because `device.example.yaml` says its values come "from
