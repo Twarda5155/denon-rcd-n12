@@ -41,6 +41,7 @@ class ServerTestCase(unittest.TestCase):
         self.telnet = FakeTelnetTransport(
             power=str(kwargs.pop("power", "on")),
             source=str(kwargs.pop("source", "SINET")),
+            sleep=int(kwargs.pop("sleep", 0)),
             fail=fail,
         )
         self.heos = FakeHeosTransport(
@@ -364,9 +365,6 @@ class PlaybackRouteTests(ServerTestCase):
             },
         )
 
-    def test_post_is_404(self) -> None:
-        status, _ = self.post("/api/playback", "state=play")
-        self.assertEqual(status, 404)
 
 
 class FavoritesRouteTests(ServerTestCase):
@@ -417,6 +415,94 @@ class FavoritesRouteTests(ServerTestCase):
         status, body = self.post("/api/favorites", "preset=0")
         self.assertEqual(status, 400)
         self.assertFalse(body["ok"])
+
+
+class StatusRouteTests(ServerTestCase):
+    """``/api/status``: the read that replaces four."""
+
+    transport_kwargs: ClassVar[dict[str, Any]] = {
+        "power": "standby",
+        "volume": 42,
+        "mute": True,
+        "source": "SICD",
+        "sleep": 30,
+    }
+
+    def test_carries_the_whole_picture(self) -> None:
+        status, body = self.get("/api/status")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["power"], "standby")
+        self.assertEqual(body["volume"], 42)
+        self.assertTrue(body["mute"])
+        self.assertEqual(body["source"], "cd")
+        self.assertEqual(body["sleep"], 30)
+        self.assertIn("state", body)
+        self.assertIn("title", body)
+
+    def test_post_is_404(self) -> None:
+        status, _ = self.post("/api/status", "")
+        self.assertEqual(status, 404)
+
+
+class SleepRouteTests(ServerTestCase):
+    """``/api/sleep``."""
+
+    transport_kwargs: ClassVar[dict[str, Any]] = {"sleep": 0}
+
+    def test_get_reports_off_as_zero(self) -> None:
+        status, body = self.get("/api/sleep")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"ok": True, "sleep": 0})
+
+    def test_set_and_cancel(self) -> None:
+        _, body = self.post("/api/sleep", "minutes=60")
+        self.assertEqual(body["sleep"], 60)
+        _, body = self.post("/api/sleep", "minutes=0")
+        self.assertEqual(body["sleep"], 0)
+
+    def test_out_of_range_is_400_and_leaves_the_timer_alone(self) -> None:
+        self.post("/api/sleep", "minutes=45")
+        status, _ = self.post("/api/sleep", "minutes=120")
+        self.assertEqual(status, 400)
+        self.assertEqual(self.telnet.sleep, 45)
+
+    def test_non_numeric_is_400(self) -> None:
+        status, body = self.post("/api/sleep", "minutes=soon")
+        self.assertEqual(status, 400)
+        self.assertIn("minutes", body["error"])
+
+    def test_missing_minutes_is_400(self) -> None:
+        status, _ = self.post("/api/sleep", "")
+        self.assertEqual(status, 400)
+
+
+class TransportRouteTests(ServerTestCase):
+    """``POST /api/playback``."""
+
+    def setUp(self) -> None:
+        """Collapse the post-command settle delay so the suite stays fast."""
+        super().setUp()
+        original = client_module.PLAYBACK_SETTLE_S
+        client_module.PLAYBACK_SETTLE_S = 0.0
+        self.addCleanup(setattr, client_module, "PLAYBACK_SETTLE_S", original)
+
+    def test_each_verb(self) -> None:
+        for verb in ("play", "pause", "stop"):
+            with self.subTest(verb=verb):
+                status, body = self.post("/api/playback", f"state={verb}")
+                self.assertEqual(status, 200)
+                self.assertEqual(body["state"], verb)
+
+    def test_unknown_is_refused(self) -> None:
+        # A state the receiver reports but cannot be asked for.
+        status, body = self.post("/api/playback", "state=unknown")
+        self.assertEqual(status, 400)
+        self.assertFalse(body["ok"])
+
+    def test_missing_state_is_400(self) -> None:
+        status, _ = self.post("/api/playback", "")
+        self.assertEqual(status, 400)
 
 
 class KeepAliveFramingTests(ServerTestCase):
@@ -618,6 +704,16 @@ class UnreachableDeviceTests(ServerTestCase):
 
     def test_source_reports_502(self) -> None:
         status, body = self.get("/api/source")
+        self.assertEqual(status, 502)
+        self.assertFalse(body["ok"])
+
+    def test_status_reports_502(self) -> None:
+        status, body = self.get("/api/status")
+        self.assertEqual(status, 502)
+        self.assertFalse(body["ok"])
+
+    def test_sleep_reports_502(self) -> None:
+        status, body = self.get("/api/sleep")
         self.assertEqual(status, 502)
         self.assertFalse(body["ok"])
 

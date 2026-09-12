@@ -2,8 +2,9 @@
 
 Implements a slice of the API in
 ``docs/decisions/2026-08-30-local-control-server.md`` on the stdlib
-``http.server``, so it runs on a bare interpreter with nothing installed: power,
-volume, mute and source both ways, playback as a read.
+``http.server``, so it runs on a bare interpreter with nothing installed:
+power, volume, mute, source, playback and the sleep timer, plus one
+``/api/status`` that reads the lot.
 
 The socket is bound to the loopback address and every asset the page needs is
 inlined, so nothing is fetched from or sent to anything but the receiver on the
@@ -61,13 +62,7 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
     """
 
     class Handler(BaseHTTPRequestHandler):
-        """Serves the single page and the device API.
-
-        Playback is readable but not writable: transport control over HEOS is
-        documented but has never been exercised on this unit, and a control
-        that might do nothing is worse than no control. A ``POST`` to it falls
-        through to the not-found branch.
-        """
+        """Serves the single page and the device API."""
 
         protocol_version = "HTTP/1.1"
         server_version = "denon-rcd-n12"
@@ -136,6 +131,12 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
                 self._run(lambda: {"source": client.get_source()})
             elif path == "/api/playback":
                 self._run(client.get_playback)
+            elif path == "/api/status":
+                # Everything the page shows, in one paced batch. Slower than
+                # any single read and faster than all of them.
+                self._run(client.get_status)
+            elif path == "/api/sleep":
+                self._run(lambda: {"sleep": client.get_sleep()})
             elif path == "/api/favorites":
                 self._run(lambda: {"favorites": client.list_favorites()})
             else:
@@ -181,7 +182,7 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
             return parse_qs(self.rfile.read(length).decode("utf-8"))
 
         def do_POST(self) -> None:
-            """Route POST requests: power, volume, mute or input changes."""
+            """Route POST requests: power, volume, mute, input, transport or sleep."""
             path = urlparse(self.path).path
             form = self._form()  # drained first, whatever the path turns out to be
             if form is None:
@@ -198,6 +199,10 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
                 self._source(form)
             elif path == "/api/favorites":
                 self._favorite(form)
+            elif path == "/api/playback":
+                self._playback(form)
+            elif path == "/api/sleep":
+                self._sleep(form)
             else:
                 self._json({"ok": False, "error": "not found"}, status=404)
 
@@ -253,6 +258,29 @@ def _handler_class(client: DenonClient) -> type[BaseHTTPRequestHandler]:
                     {"ok": False, "error": f"mute state must be on, off or toggle, got {state!r}"},
                     status=400,
                 )
+
+        def _playback(self, form: dict[str, list[str]]) -> None:
+            """Drive the transport.
+
+            The state is passed through unvalidated: ``set_play_state`` names
+            the states it accepts, and `unknown` -- which the receiver reports
+            but cannot be asked for -- is refused there with a message worth
+            more than anything this layer could invent.
+
+            Args:
+                form: Decoded form parameters carrying ``state``.
+            """
+            state = (form.get("state") or [""])[0]
+            self._run(lambda: client.set_play_state(state))
+
+        def _sleep(self, form: dict[str, list[str]]) -> None:
+            """Arm or cancel the sleep timer.
+
+            Args:
+                form: Decoded form parameters carrying ``minutes``; 0 cancels.
+            """
+            raw = (form.get("minutes") or [""])[0]
+            self._run(lambda: {"sleep": client.set_sleep(_whole(raw, "minutes"))})
 
         def _favorite(self, form: dict[str, list[str]]) -> None:
             """Start a favourite.
