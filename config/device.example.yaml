@@ -1,9 +1,30 @@
-﻿device:
+# Copy this to device.yaml and fill it in for your receiver.
+#
+# Or do not fill it in by hand at all -- generate the whole block:
+#
+#     python tools/probe_identity.py <receiver-ip>
+#
+# The IP is the one value that cannot come from the device, since you need it
+# to ask the device anything. Find it in your router's DHCP table, or at the
+# unit under Settings > Network. The rest the tool reads off the receiver.
+#
+# player/get_players lists every HEOS player on the network rather than only
+# the one you connected to, so the tool copes with a house that has several: it
+# picks the one reporting the address you gave, and prints them all for you to
+# choose between when it cannot tell. The control page has no such notion. It
+# drives exactly one receiver -- the one named here -- and to point it at
+# another you change this file and restart it.
+#
+# Only host and heos_pid are read by the code. serial, model and
+# heos_firmware describe the unit for whoever reads this file; they can be
+# wrong without anything breaking. heos_pid cannot: without it every HEOS
+# command goes out with an empty player id.
+device:
   host: 192.168.x.x        # receiver IP on your LAN
-  heos_pid: 000000000      # from player/get_players
-  serial: XXXXXXXXXXXX
-  model: RCD-N12
-  heos_firmware: 0.0.0
+  heos_pid: 000000000      # player/get_players -> pid
+  serial: XXXXXXXXXXXX     # player/get_players -> serial
+  model: RCD-N12           # marketing name; the unit calls itself "Denon CEOL"
+  heos_firmware: 0.0.0     # player/get_players -> version
 ports:
   heos: 1255
   avr: 23

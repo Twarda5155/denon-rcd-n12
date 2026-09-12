@@ -68,7 +68,11 @@ Roughly in value order.
 - `cli.py` — `serve`, `power`, `volume`, `mute`, `source`, `playback`.
 - Tests: 149 passed, 31 subtests, all against fakes with the receiver powered
   off (run 2026-09-12).
-- `tools/probe_device.py` and `tools/probe_ports.py`.
+- `tools/probe_device.py`, `tools/probe_ports.py`, and `tools/probe_identity.py`
+  — the last prints a ready-to-paste `config/device.yaml` for a receiver at a
+  given address, because `device.example.yaml` says its values come "from
+  player/get_players" and that is true of three keys, misleading for `model`,
+  and impossible for `host`.
 
 ## Corrections worth remembering
 
