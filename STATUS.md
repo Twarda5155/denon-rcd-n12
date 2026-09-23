@@ -1,4 +1,11 @@
-# Status — updated 2026-09-12
+# Status — updated 2026-09-23
+
+## Repository
+
+Public on GitHub since 2026-09-23, under the MIT license (`LICENSE`). Before
+publishing, the history was rewritten so every commit carries the identity
+`denon-rcd-n12 dev` and a GitHub noreply address; keep that identity in this
+repository's local git config.
 
 ## Next step
 
